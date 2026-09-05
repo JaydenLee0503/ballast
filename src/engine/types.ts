@@ -1,5 +1,5 @@
 /**
- * Resilience Studio — engine domain types.
+ * Ballast — engine domain types.
  *
  * This module (and everything else in `src/engine/`) is pure and
  * dependency-free. No React, no zustand, no Supabase, no I/O. Every exported

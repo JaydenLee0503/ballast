@@ -28,6 +28,15 @@ export {
 } from './wind.ts'
 export { planArea_m2, storeyStiffness_kN_per_m, storeyDrift } from './drift.ts'
 export {
+  compareDesigns,
+  metricDelta,
+  type BetterWhen,
+  type ChangeDirection,
+  type DesignComparison,
+  type DesignSnapshot,
+  type MetricDelta,
+} from './compare.ts'
+export {
   grossVolume_m3,
   grossFloorArea_m2,
   structuralVolume_m3,

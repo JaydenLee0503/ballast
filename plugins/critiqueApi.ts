@@ -153,7 +153,7 @@ export function critiqueApi(options: CritiqueApiOptions): Plugin {
   }
 
   return {
-    name: 'resilience-studio:critique-api',
+    name: 'ballast:critique-api',
     configureServer: attach,
     configurePreviewServer: attach,
   }

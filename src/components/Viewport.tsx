@@ -9,9 +9,11 @@
  */
 
 import { useEffect, useRef, useState, type ComponentRef } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Grid, OrbitControls } from '@react-three/drei'
+import { Vector2, Vector3 } from 'three'
 import type { AnalysisResult, Structure, WindHazard } from '@/engine'
+import { rotateAboutPivot } from '@/lib/orbit.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
 import { FoundationBlock, StoreyStack } from './scene/StoreyStack.tsx'
 import { WindArrows } from './scene/WindArrows.tsx'
@@ -87,6 +89,159 @@ function CameraRig({
     // absent — they come in through the ref above, because listing them would
     // refit the camera on every slider tick.
   }, [trigger, camera, camera.position, controlsRef])
+
+  return null
+}
+
+
+/**
+ * Orbit around the point under the cursor.
+ *
+ * OrbitControls cannot do this, and the reason is worth writing down. Its model
+ * is spherical coordinates around `target`, and `update()` ends with
+ * `camera.lookAt(target)` — so the target is simultaneously the pivot *and* the
+ * thing at the centre of the screen. Move it onto the point under the cursor
+ * and that point is yanked to the centre: a jump on every mouse-down, growing
+ * with distance from centre.
+ *
+ * So rotation is done here instead, as a rigid rotation of the whole camera rig
+ * about the cursor point P. Rotating a camera about P leaves P at exactly the
+ * same coordinates in camera space, which means it stays pinned to the same
+ * pixel — no jump at the start of the drag, and none during it. That is the
+ * behaviour a CAD user expects: the thing you are pointing at stays put and the
+ * world turns around it.
+ *
+ * The trick that keeps OrbitControls usable for everything else is rotating
+ * `target` about P by the same quaternion as the camera. `camera.position` and
+ * `target` are two points of one rigid body, so afterwards the camera is still
+ * looking exactly at the target and OrbitControls' own bookkeeping — which
+ * re-derives its spherical state from `position - target` on every update —
+ * stays consistent. Pan, dolly, damping and `zoomToCursor` keep working
+ * untouched; only `enableRotate` is handed over.
+ *
+ * The rotation itself is `lib/orbit.ts`, which is where the pinning property
+ * is stated and tested against a real projection matrix.
+ *
+ * A drag that starts over empty space falls back to the existing target, which
+ * is ordinary orbit behaviour. Double-click still recentres on a point, which
+ * is now a convenience rather than a necessity. Wheel zoom is OrbitControls'
+ * `zoomToCursor`.
+ */
+function CursorPivot({
+  controlsRef,
+}: {
+  controlsRef: React.RefObject<ComponentRef<typeof OrbitControls> | null>
+}) {
+  const camera = useThree((state) => state.camera)
+  const scene = useThree((state) => state.scene)
+  const raycaster = useThree((state) => state.raycaster)
+  const domElement = useThree((state) => state.gl.domElement)
+
+  // Where a double-click is gliding the target to. Null when nothing is moving.
+  const glideTo = useRef<Vector3 | null>(null)
+
+  useEffect(() => {
+    // Allocated once and reused: this runs on every pointermove, and a drag
+    // that allocates per frame is a drag that stutters on GC.
+    const ndc = new Vector2()
+    const pivot = new Vector3()
+
+    let activePointer: number | null = null
+    let lastX = 0
+    let lastY = 0
+
+    function pointUnderCursor(event: MouseEvent): Vector3 | null {
+      const rect = domElement.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return null
+      ndc.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      )
+      raycaster.setFromCamera(ndc, camera)
+      const hit = raycaster
+        .intersectObjects(scene.children, true)
+        .find((intersection) => intersection.object.visible)
+      return hit ? hit.point.clone() : null
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      const controls = controlsRef.current
+      if (!controls || event.button !== 0) return
+
+      // A second finger means a pinch, which is OrbitControls' gesture, not
+      // ours. Drop the drag rather than fighting it for the camera.
+      if (activePointer !== null) {
+        activePointer = null
+        return
+      }
+
+      // Empty space has no point to pivot on; the existing target is the
+      // sensible fallback and gives plain orbit behaviour.
+      pivot.copy(pointUnderCursor(event) ?? controls.target)
+      activePointer = event.pointerId
+      lastX = event.clientX
+      lastY = event.clientY
+      glideTo.current = null
+    }
+
+    function onPointerMove(event: PointerEvent) {
+      const controls = controlsRef.current
+      if (!controls || activePointer !== event.pointerId) return
+
+      const dx = event.clientX - lastX
+      const dy = event.clientY - lastY
+      lastX = event.clientX
+      lastY = event.clientY
+
+      rotateAboutPivot(camera.position, controls.target, pivot, {
+        dx,
+        dy,
+        height: domElement.clientHeight || 1,
+        minPolarAngle: controls.minPolarAngle,
+        maxPolarAngle: controls.maxPolarAngle,
+      })
+      controls.update()
+    }
+
+    function onPointerUp(event: PointerEvent) {
+      if (activePointer === event.pointerId) activePointer = null
+    }
+
+    function onDoubleClick(event: MouseEvent) {
+      const point = pointUnderCursor(event)
+      if (point !== null) glideTo.current = point
+    }
+
+    domElement.addEventListener('pointerdown', onPointerDown)
+    domElement.addEventListener('dblclick', onDoubleClick)
+    // Move and release go on the window: a drag that runs off the edge of the
+    // canvas should keep rotating, and releasing out there should still end it.
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      domElement.removeEventListener('pointerdown', onPointerDown)
+      domElement.removeEventListener('dblclick', onDoubleClick)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [camera, scene, raycaster, domElement, controlsRef])
+
+  useFrame((_, delta) => {
+    const controls = controlsRef.current
+    const destination = glideTo.current
+    if (!controls || destination === null) return
+
+    // Exponential smoothing: frame-rate independent, always converging, and it
+    // needs no start time or duration to keep in sync.
+    controls.target.lerp(destination, 1 - Math.exp(-delta * 12))
+    if (controls.target.distanceTo(destination) < 0.01) {
+      controls.target.copy(destination)
+      glideTo.current = null
+    }
+    controls.update()
+  })
 
   return null
 }
@@ -175,9 +330,16 @@ function Scene({
         dampingFactor={0.08}
         minDistance={5}
         maxDistance={600}
+        // Rotation is CursorPivot's, so that it can happen about the point
+        // under the cursor instead of about the target. Everything else here
+        // -- pan, dolly, damping, limits -- stays with OrbitControls.
+        enableRotate={false}
+        // Dolly toward the pointer rather than the screen centre.
+        zoomToCursor
         // Stop the camera going under the ground plane.
         maxPolarAngle={Math.PI / 2 - 0.02}
       />
+      <CursorPivot controlsRef={controlsRef} />
     </>
   )
 }
@@ -230,7 +392,8 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
       </div>
 
       <p className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-center text-xs text-neutral-600">
-        Drag to orbit &middot; scroll to zoom &middot; click a storey to edit it
+        Drag to orbit &middot; scroll to zoom at the cursor &middot; double-click
+        to re-centre &middot; click a storey to edit it
       </p>
     </div>
   )

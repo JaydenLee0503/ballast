@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Seed material library for Resilience Studio.",
+    "Seed material library for Ballast.",
     "JSON has no comment syntax, so every entry carries a `sources` object -- one citation string per numeric field. That is the 'comment next to each entry' the brief asks for, in the only form this file format allows.",
     "EMBODIED CARBON: the published factors are per kilogram (kgCO2e/kg, cradle-to-gate A1-A3). embodiedCarbon_kgCO2e_m3 is therefore density x factor, and each `sources.embodiedCarbon` string shows that arithmetic so it can be rechecked.",
     "Primary carbon source: IStructE, 'A brief guide to calculating embodied carbon', The Structural Engineer, July 2020, Table 2 'A1A3 ECFs for typical structural materials' (values drawn from ICE V3 and product EPDs).",

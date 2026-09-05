@@ -82,7 +82,7 @@ export const KD_DIRECTIONALITY = 0.85
  * Topographic factor Kzt. ASCE 7-16 §26.8.2: Kzt = 1.0 for structures not on
  * an abrupt hill, ridge or escarpment.
  *
- * ASSUMPTION: Resilience Studio places buildings on flat ground. When a
+ * ASSUMPTION: Ballast places buildings on flat ground. When a
  * terrain/site feature is added to the product, this becomes an input.
  */
 export const KZT_TOPOGRAPHIC = 1.0

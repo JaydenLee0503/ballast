@@ -56,9 +56,29 @@ export const DEFAULT_HAZARD: WindHazard = {
   terrainRoughness: 0.02,
 }
 
+/**
+ * The design the current one is measured against.
+ *
+ * It carries its own label because where a baseline came from is the whole of
+ * its meaning: "vs. the design you started from" and "vs. the one you pinned
+ * ten minutes ago" are different claims about the same percentages.
+ */
+export interface Baseline {
+  label: string
+  structure: Structure
+  hazard: WindHazard
+}
+
+export const STARTING_BASELINE: Baseline = {
+  label: 'Starting design',
+  structure: DEFAULT_STRUCTURE,
+  hazard: DEFAULT_HAZARD,
+}
+
 export interface DesignState {
   structure: Structure
   hazard: WindHazard
+  baseline: Baseline
   /** Which storey the controls edit. `null` means "all storeys at once". */
   selectedStoreyIndex: number | null
 
@@ -89,6 +109,11 @@ export interface DesignState {
    * repairing it would hide that.
    */
   loadDesign: (design: SavedDesign) => void
+
+  /** Measure from here: the design on screen becomes the new baseline. */
+  pinBaseline: () => void
+  /** Back to the design the studio opens with. */
+  resetBaseline: () => void
 
   reset: () => void
 }
@@ -122,6 +147,7 @@ function withAllStoreys(
 export const useDesignStore = create<DesignState>()((set) => ({
   structure: DEFAULT_STRUCTURE,
   hazard: DEFAULT_HAZARD,
+  baseline: STARTING_BASELINE,
   selectedStoreyIndex: null,
 
   selectStorey: (index) => set({ selectedStoreyIndex: index }),
@@ -220,15 +246,35 @@ export const useDesignStore = create<DesignState>()((set) => ({
     set({
       structure: design.structure,
       hazard: design.hazard,
+      // Opening a design also moves the baseline to it. The question a student
+      // has after opening someone else's work is "what did *my* changes do",
+      // not "how does this differ from a default they never saw".
+      baseline: {
+        label: design.name,
+        structure: design.structure,
+        hazard: design.hazard,
+      },
       // The loaded design has its own storeys; a selection pointing into the
       // previous one would highlight an unrelated floor.
       selectedStoreyIndex: null,
     }),
 
+  pinBaseline: () =>
+    set((state) => ({
+      baseline: {
+        label: 'Pinned design',
+        structure: state.structure,
+        hazard: state.hazard,
+      },
+    })),
+
+  resetBaseline: () => set({ baseline: STARTING_BASELINE }),
+
   reset: () =>
     set({
       structure: DEFAULT_STRUCTURE,
       hazard: DEFAULT_HAZARD,
+      baseline: STARTING_BASELINE,
       selectedStoreyIndex: null,
     }),
 }))

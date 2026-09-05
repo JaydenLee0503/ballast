@@ -1,4 +1,4 @@
-# Resilience Studio
+# Ballast
 
 A browser-based 3D simulator where students take a structure, subject it to a
 real climate hazard, and redesign it to survive while minimising embodied
@@ -53,18 +53,22 @@ src/
     drift.ts           storey stiffness and drift
     stability.ts       overturning, sliding, per-storey bending
     sustainability.ts  quantity take-off -> carbon and cost
+    compare.ts         two AnalysisResults -> per-metric deltas and direction
     analyze.ts         the single entry point; dispatches on hazard.kind
     index.ts           public surface
   store/
-    design.ts          zustand: structure + hazard + selection. editing only.
+    design.ts          zustand: structure + hazard + baseline + selection
     useAnalysis.ts     the bridge: analyze() memoised on (structure, hazard)
+    useComparison.ts   the same, for the baseline, then compareDesigns()
     sharedDesign.ts    opens a design out of the URL fragment, at boot
+    useAppView.ts      landing vs studio, on the URL hash
   persistence/
     schema.ts          the saved-design format, and the parser that guards it
     library.ts         DesignLibrary + the localStorage implementation
     share.ts           a design encoded into a link
     index.ts           public surface
   components/
+    Landing.tsx        the front door; "Open the studio" leads here
     Viewport.tsx       r3f canvas, lighting, camera, legend
     scene/
       StoreyStack.tsx  one box per storey, coloured by utilization
@@ -81,6 +85,7 @@ src/
     guard.ts           flags figures that do not trace back to the context
     client.ts          POSTs to /api/critique, then parses and guards
   lib/
+    orbit.ts           rigid camera rotation about an arbitrary pivot
     palette.ts         utilisation colour bands (source of truth for colour)
     format.ts          display formatting only; no arithmetic that means anything
     limits.ts          editing bounds, shared by the controls and the parser
@@ -241,7 +246,7 @@ network appears. Every method is declared `async` rather than merely
 Promise-returning, so a failure cannot escape a caller's `.catch()` as a
 synchronous throw.
 
-**Storage is one key per design**, `resilience-studio.design.<id>`. It costs a
+**Storage is one key per design**, `ballast.design.<id>`. It costs a
 key scan on `list()` and buys two things: a save rewrites one entry rather than
 all of them, and one corrupt record loses one design instead of the library. An
 unreadable record is skipped and left in place — a later version may be able to
@@ -262,6 +267,29 @@ where the student is now, on failure so a refresh does not reproduce it.
 
 ---
 
+## The landing page
+
+`#studio` in the hash means the studio; anything else means the landing page.
+Hash-based rather than a router — one boolean's worth of navigation does not
+justify a dependency, and a hash needs no server rewrite rule, which matters
+for a thing that has to run off a static host or a demo laptop. The hash is
+pushed, not replaced, so Back returns to the landing page instead of leaving
+the site. A share link skips the landing entirely: whoever followed it was
+sent a building, not an invitation to read the pitch.
+
+**Everything the page claims, the engine also claims.** The drift ratios in
+the hero diagram are real output for the default six-storey design — worst at
+the ground floor, because storey shear accumulates downward — and the
+limitations list is the same set `analyze()` raises as warnings. The diagram
+is inline SVG on the shared palette, so the page fetches nothing, for the same
+reason the 3D viewport does not.
+
+Overselling a teaching model is the fastest way to make it untrustworthy the
+moment somebody opens it, which is why "and what it does not model" is a
+section on the landing page rather than a footnote inside the app.
+
+---
+
 ## UI conventions
 
 - **Coordinate mapping.** The engine works in plan X/Y with height separate;
@@ -277,12 +305,55 @@ where the student is now, on failure so a refresh does not reproduce it.
   a field off `AnalysisResult`. Wind arrows are normalised against the largest
   storey force, so they show the *shape* of the load; magnitude is the panel's
   job.
+- **Rotation is about the point under the cursor**, and it is ours, not
+  OrbitControls'. Its model makes `target` both the pivot and the centre of the
+  screen — `update()` ends in `lookAt(target)` — so moving the target onto the
+  cursor point yanks that point to the middle. Instead `lib/orbit.ts` rotates
+  the whole rig rigidly about the cursor point: rotating a camera about P
+  leaves P at the same camera-space coordinates, so it stays on the same pixel
+  and nothing jumps. `target` is rotated by the same quaternion, which keeps
+  the rig rigid and lets OrbitControls keep pan, dolly, damping and
+  `zoomToCursor` — only `enableRotate` is handed over. `orbit.test.ts` asserts
+  the pinning property against a real projection matrix, including across a
+  long drag applied one event at a time, where error would accumulate rather
+  than cancel.
 - **No runtime asset fetches in the scene.** No drei `<Environment>` and no
   drei `<Text>` — both pull from a CDN, which would make the viewport depend
   on the network during a demo. Lighting is local, labels are HTML.
 - **Carbon and cost are shown as totals and per m2.** Totals alone cannot
   compare a six-storey design with a twelve-storey one. `grossFloorArea_m2()`
   is in the engine so the denominator is traceable too.
+
+---
+
+## The baseline
+
+Three absolute dials tell a student where they are. They do not tell them what
+the last twenty minutes of work bought, and that is the lesson: not "carbon is
+412 t" but "40% more safety for 18% more carbon". The tradeoff is only visible
+against something.
+
+So every dial carries its change against a baseline, and **the deltas come from
+`engine/compare.ts`, not from subtraction in the panel**. A percentage on
+screen is a number a student will quote; doing the arithmetic in a component
+would put an untraceable figure next to traceable ones. `compareDesigns`
+reports direction per metric and deliberately refuses to total them into a
+verdict, for the same reason ScoreCard is not a 0-100 score.
+
+The degenerate cases are the ones that matter, because they are one slider drag
+away. A safety factor is legitimately infinite and a drift ratio legitimately
+zero at 0 km/h, so a relative change is `null` — reported as an em dash — where
+a naive ratio would print `Infinity%` on the easiest input in the app to reach.
+
+The baseline starts as the design the studio opens with, can be pinned to
+whatever is on screen, and **follows a design that gets opened**: after opening
+someone else's work the useful question is "what did *my* changes do", not "how
+does this differ from a default they never saw".
+
+Not yet done, and the obvious next move: hand the comparison to the critique as
+context, so the model can talk about the direction a student is heading rather
+than only where they are. It needs unit buckets in `ai/guard.ts` for the new
+figures first — see the guard's note about renaming fields.
 
 ---
 

@@ -34,3 +34,18 @@ export function formatPercent(fraction: number): string {
   if (!Number.isFinite(fraction)) return '—'
   return `${Math.round(fraction * 100)}%`
 }
+
+/**
+ * A change, with its sign kept: "+18%", "-4%", "0%".
+ *
+ * The sign is the information — a delta rendered as a bare "18%" reads as an
+ * absolute value and is the wrong number entirely. Null (an undefined ratio,
+ * such as a change from zero) renders as an em dash rather than as 0%, which
+ * would claim nothing happened.
+ */
+export function formatSignedPercent(fraction: number | null): string {
+  if (fraction === null || !Number.isFinite(fraction)) return '—'
+  const percent = Math.round(fraction * 100)
+  if (percent === 0) return '0%'
+  return `${percent > 0 ? '+' : '\u2212'}${Math.abs(percent)}%`
+}

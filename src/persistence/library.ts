@@ -11,7 +11,7 @@
  * one, and the cost of discovering that later is every call site changing at
  * the moment a network is introduced. One `await` now is cheaper.
  *
- * Storage layout: one key per design, `resilience-studio.design.<id>`, rather
+ * Storage layout: one key per design, `ballast.design.<id>`, rather
  * than a single key holding an array. It costs a key scan on `list()` and buys
  * two things — a save rewrites one entry instead of all of them, and a single
  * corrupt or unreadable record loses one design rather than the whole library.
@@ -20,7 +20,7 @@
 import type { MaterialLibrary } from '@/engine'
 import { parseDesignJson, serializeDesign, type SavedDesign } from './schema.ts'
 
-export const STORAGE_PREFIX = 'resilience-studio.design.'
+export const STORAGE_PREFIX = 'ballast.design.'
 
 export interface DesignRecord {
   id: string

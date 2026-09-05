@@ -12,12 +12,15 @@
 import { useState } from 'react'
 import { CritiquePanel } from '@/components/CritiquePanel.tsx'
 import { DesignControls } from '@/components/DesignControls.tsx'
+import { Landing } from '@/components/Landing.tsx'
 import { SavedDesigns } from '@/components/SavedDesigns.tsx'
 import { ScorePanel } from '@/components/ScorePanel.tsx'
 import { StoreyTable } from '@/components/StoreyTable.tsx'
 import { Viewport } from '@/components/Viewport.tsx'
 import { useDesignStore } from '@/store/design.ts'
 import { useAnalysis } from '@/store/useAnalysis.ts'
+import { useAppView } from '@/store/useAppView.ts'
+import { useComparison } from '@/store/useComparison.ts'
 import { sharedDesignOutcome } from '@/store/sharedDesign.ts'
 
 type RailTab = 'design' | 'saved' | 'critique'
@@ -30,18 +33,32 @@ const RAIL_TABS: ReadonlyArray<{ id: RailTab; label: string }> = [
 
 export default function App() {
   const [tab, setTab] = useState<RailTab>('design')
+  const { view, openStudio, openLanding } = useAppView()
   // Already settled: main.tsx consumed the link before the first render.
   const shared = sharedDesignOutcome()
   const structure = useDesignStore((state) => state.structure)
   const hazard = useDesignStore((state) => state.hazard)
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
   const selectStorey = useDesignStore((state) => state.selectStorey)
+  const pinBaseline = useDesignStore((state) => state.pinBaseline)
+  const resetBaseline = useDesignStore((state) => state.resetBaseline)
   const { result, error } = useAnalysis()
+  const { comparison, baselineLabel, isBaseline } = useComparison(result, structure)
+
+  // After every hook, never inside a branch: the studio's hooks keep running
+  // whichever page is showing, so switching views cannot reorder them.
+  if (view === 'landing') return <Landing onOpenStudio={openStudio} />
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 font-sans text-neutral-100">
       <header className="flex items-baseline gap-3 border-b border-neutral-900 px-5 py-3">
-        <h1 className="text-sm font-semibold tracking-tight">Resilience Studio</h1>
+        <button
+          type="button"
+          onClick={openLanding}
+          className="text-sm font-semibold tracking-tight hover:text-neutral-400"
+        >
+          Ballast
+        </button>
         <p className="text-xs text-neutral-500">
           Wind · ASCE 7-style · every number from the engine
         </p>
@@ -75,7 +92,15 @@ export default function App() {
           </div>
 
           <aside className="min-h-0 space-y-4 overflow-y-auto border-neutral-900 p-4 lg:border-l">
-            <ScorePanel result={result} structure={structure} />
+            <ScorePanel
+              result={result}
+              structure={structure}
+              comparison={comparison}
+              baselineLabel={baselineLabel}
+              isBaseline={isBaseline}
+              onPinBaseline={pinBaseline}
+              onResetBaseline={resetBaseline}
+            />
 
             <section className="border-t border-neutral-900 pt-4">
               <h3 className="mb-2 text-[0.65rem] uppercase tracking-wider text-neutral-600">

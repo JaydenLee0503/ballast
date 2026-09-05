@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Resilience Studio surfaces are dark by default: the 3D viewport is the
+/* Ballast surfaces are dark by default: the 3D viewport is the
    focus and a light chrome washes it out.
 
    The three utilisation colours must match BAND_HEX in src/lib/palette.ts,
