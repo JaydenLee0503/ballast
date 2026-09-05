@@ -1,7 +1,36 @@
 @import "tailwindcss";
 
-/* Ballast surfaces are dark by default: the 3D viewport is the
-   focus and a light chrome washes it out.
+/* Fonts are served from /public/fonts rather than a CDN, for the same reason
+   the 3D scene has no drei <Environment>: nothing on this page should need
+   the network to look right during a demo. `swap` so text is readable while
+   they load, and only latin is shipped -- four files, about 57 kB total. */
+@font-face {
+  font-family: "Fredoka";
+  src: url("/fonts/fredoka-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nunito";
+  src: url("/fonts/nunito-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nunito";
+  src: url("/fonts/nunito-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Pixelify Sans";
+  src: url("/fonts/pixelify-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
+/* The studio is dark by default: the 3D viewport is the focus and a light
+   chrome washes it out.
 
    The three utilisation colours must match BAND_HEX in src/lib/palette.ts,
    which is the source of truth — three.js cannot parse oklch(), so the
@@ -12,4 +41,23 @@
   --color-caution: #f59e0b;
   --color-fail: #ef4444;
   --color-wind: #60a5fa;
+
+  /* The landing page's own palette. Warm paper and a soft indigo ink rather
+     than black-on-white, because the page has to look friendly to a twelve
+     year old before it looks credible to a judge. The block colours are taken
+     off the isometric tower reference; coral and the blue are adapted from
+     Hack the North's own accents. These are deliberately separate tokens from
+     the utilisation colours above: a landing page restyle must never be able
+     to change what "over the limit" looks like in the studio. */
+  --color-paper: #fff7ef;
+  --color-ink: #2f2748;
+  --color-coral: #ff7a66;
+  --color-bloom: #56c2ec;
+  --color-lilac: #a99df0;
+  --color-mint: #7fe3b8;
+  --color-blossom: #f072b6;
+
+  --font-display: "Fredoka", ui-rounded, "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Nunito", ui-rounded, "Segoe UI", system-ui, sans-serif;
+  --font-pixel: "Pixelify Sans", "Courier New", ui-monospace, monospace;
 }

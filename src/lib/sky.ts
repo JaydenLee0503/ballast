@@ -211,7 +211,12 @@ export function skyBrightness(palette: SkyPalette): number {
  */
 export const SUN_AZIMUTH_RAD = Math.atan2(38, 26)
 const SUN_ELEVATION_HIGH_RAD = (54 * Math.PI) / 180
-const SUN_ELEVATION_LOW_RAD = (8 * Math.PI) / 180
+/**
+ * The sun stops here rather than at the horizon. A directional light at a very
+ * low angle stretches the shadow camera's ground footprint by 1/sin(elevation)
+ * — the shadow map runs out of texels long before the sun runs out of sky.
+ */
+const SUN_ELEVATION_LOW_RAD = (16 * Math.PI) / 180
 /** The sun has finished setting here; past this only colour changes. */
 const SUNSET_PROGRESS = 0.85
 

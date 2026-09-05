@@ -1,25 +1,51 @@
 /**
- * The 3D view. Renders the structure from `AnalysisResult`, nothing more:
- * every colour and every arrow length traces to a field the engine produced.
+ * The 3D view: the design, standing on a plot, in a city.
  *
- * Lighting is entirely local (ambient + hemisphere + one shadowing
- * directional). No `<Environment>` and no drei `<Text>` — both fetch assets
- * from a CDN at runtime, which would make the viewport depend on the network
- * and on a third party staying up during a demo.
+ * Two layers, and the line between them is the point. The **design** —
+ * `StoreyStack` and `WindArrows` — renders `AnalysisResult` and nothing more:
+ * every colour and every arrow length traces to a field the engine produced,
+ * and those are the only saturated colours in the frame. The **world** —
+ * `scene/World.tsx` — is scenery: streets, trees, traffic, neighbours and a
+ * sky that darkens as the tower climbs. It reads no engine output and feeds
+ * none; its only input is the design's total height, which is something the
+ * student typed, not something the engine derived.
+ *
+ * The scenery earns its place by supplying scale. A 40 m tower means nothing
+ * beside an empty grid and a great deal beside four-storey walk-ups and a road
+ * with cars on it, and a building that is about to fall over is a different
+ * proposition when there is a street underneath.
+ *
+ * Lighting and sky are entirely local. No `<Environment>`, no drei `<Text>`,
+ * no textures — all of those fetch assets from a CDN at runtime, which would
+ * make the viewport depend on the network and on a third party staying up
+ * during a demo.
  */
 
-import { useEffect, useRef, useState, type ComponentRef } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+} from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Grid, OrbitControls } from '@react-three/drei'
+import { OrbitControls } from '@react-three/drei'
 import { Vector2, Vector3 } from 'three'
 import type { AnalysisResult, Structure, WindHazard } from '@/engine'
 import { rotateAboutPivot } from '@/lib/orbit.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
 import { FoundationBlock, StoreyStack } from './scene/StoreyStack.tsx'
 import { WindArrows } from './scene/WindArrows.tsx'
+import { World } from './scene/World.tsx'
 import { useDesignStore } from '@/store/design.ts'
 
-const CAMERA_FOV_DEG = 45
+/**
+ * Narrower than a typical 3D viewport. A long lens flattens perspective, which
+ * is what makes a model read as a model rather than as a photograph taken from
+ * a helicopter — the diorama look this scene is after. The framing maths below
+ * reads this constant, so changing it re-fits the camera consistently.
+ */
+const CAMERA_FOV_DEG = 34
 
 interface Dimensions {
   totalHeight_m: number
@@ -261,48 +287,16 @@ function Scene({
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
   const selectStorey = useDesignStore((state) => state.selectStorey)
   const dimensions = measure(structure)
-  const shadowExtent = Math.max(40, dimensions.footprintRadius_m * 3)
+  // Stable, because the scenery below it is memoised on this prop: a fresh
+  // closure every render would rebuild several hundred instanced objects on
+  // every slider tick.
+  const clearSelection = useCallback(() => selectStorey(null), [selectStorey])
 
   return (
     <>
-      <color attach="background" args={['#0c0a09']} />
-      <fog attach="fog" args={['#0c0a09', 120, 420]} />
-
-      <ambientLight intensity={0.5} />
-      <hemisphereLight args={['#cbd5e1', '#1c1917', 0.7]} />
-      <directionalLight
-        castShadow
-        position={[38, 52, 26]}
-        intensity={2.2}
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-shadowExtent}
-        shadow-camera-right={shadowExtent}
-        shadow-camera-top={shadowExtent}
-        shadow-camera-bottom={-shadowExtent}
-        shadow-camera-far={220}
-      />
-
-      {/* Ground. Clicking it clears the storey selection, which is the
-          gesture people reach for without being told. */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.01, 0]}
-        receiveShadow
-        onClick={() => selectStorey(null)}
-      >
-        <planeGeometry args={[600, 600]} />
-        <meshStandardMaterial color="#1c1917" roughness={1} />
-      </mesh>
-      <Grid
-        position={[0, 0.01, 0]}
-        infiniteGrid
-        cellSize={1}
-        sectionSize={10}
-        cellColor="#292524"
-        sectionColor="#44403c"
-        fadeDistance={180}
-        fadeStrength={1.5}
-        followCamera={false}
+      <World
+        totalHeight_m={dimensions.totalHeight_m}
+        onGroundClick={clearSelection}
       />
 
       <FoundationBlock structure={structure} />
@@ -391,10 +385,14 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
         </button>
       </div>
 
-      <p className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-center text-xs text-neutral-600">
-        Drag to orbit &middot; scroll to zoom at the cursor &middot; double-click
-        to re-centre &middot; click a storey to edit it
-      </p>
+      {/* On a chip, not bare text: the sky behind it runs from midday blue to
+          midnight, and no single text colour is legible against both. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
+        <p className="rounded-md border border-neutral-800 bg-neutral-950/70 px-3 py-1.5 text-center text-xs text-neutral-400 backdrop-blur">
+          Drag to orbit &middot; scroll to zoom at the cursor &middot;
+          double-click to re-centre &middot; click a storey to edit it
+        </p>
+      </div>
     </div>
   )
 }

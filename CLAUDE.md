@@ -73,6 +73,8 @@ src/
     scene/
       StoreyStack.tsx  one box per storey, coloured by utilization
       WindArrows.tsx   per-storey arrows, length from lateralForce_kN
+      World.tsx        sky, sun, streets, trees, traffic, neighbours
+      scenery.ts       the deterministic layout of all of that
     ScorePanel.tsx     the three dials + governing failure mode
     StoreyTable.tsx    per-storey breakdown, selectable rows
     DesignControls.tsx every slider and select
@@ -87,6 +89,7 @@ src/
   lib/
     orbit.ts           rigid camera rotation about an arbitrary pivot
     palette.ts         utilisation colour bands (source of truth for colour)
+    sky.ts             building height -> time of day, as a pure palette
     format.ts          display formatting only; no arithmetic that means anything
     limits.ts          editing bounds, shared by the controls and the parser
 plugins/
@@ -269,24 +272,40 @@ where the student is now, on failure so a refresh does not reproduce it.
 
 ## The landing page
 
+Ballast is a tool a fourteen year old should want to open, so the landing page
+is warm paper, rounded blocks and short sentences while the studio is a dark
+instrument panel. They deliberately do not match: this is the box the game
+comes in, and the studio is the game.
+
+**Two ideas, in this order.** Primary is *charming* — chunky rounded shapes,
+sticker shadows (hard offset, no blur), a pastel isometric tower that leans.
+Secondary is *pixel*, used as seasoning: small labels, step numbers, the clouds
+and the gust. Pixel is an accent rather than the whole costume, because a page
+set entirely in a pixel font stops being readable, and stops being charming,
+about two paragraphs in.
+
+**The landing palette is separate tokens from the utilisation colours**
+(`--color-paper` / `--color-ink` / `--color-coral` / … versus
+`--color-safe` / `--color-caution` / `--color-fail`). A restyle of the front
+door must never be able to change what "over the limit" looks like in the
+studio. Fonts are Fredoka (display), Nunito (body) and Pixelify Sans (accent),
+**self-hosted in `public/fonts`** — about 57 kB — for the same reason the scene
+has no drei `<Environment>`: nothing should need the network to look right
+during a demo.
+
+**Everything the page claims, the engine also claims.** The tower leans because
+drift is real, the lower blocks are the loaded ones because storey shear
+accumulates downward, and "stuff we are upfront about" is the same list
+`analyze()` raises as warnings. Overselling a teaching model is the fastest way
+to make it untrustworthy the moment somebody opens it, which is why the limits
+are a section on the front page rather than a footnote inside the app.
+
 `#studio` in the hash means the studio; anything else means the landing page.
-Hash-based rather than a router — one boolean's worth of navigation does not
-justify a dependency, and a hash needs no server rewrite rule, which matters
-for a thing that has to run off a static host or a demo laptop. The hash is
-pushed, not replaced, so Back returns to the landing page instead of leaving
-the site. A share link skips the landing entirely: whoever followed it was
-sent a building, not an invitation to read the pitch.
-
-**Everything the page claims, the engine also claims.** The drift ratios in
-the hero diagram are real output for the default six-storey design — worst at
-the ground floor, because storey shear accumulates downward — and the
-limitations list is the same set `analyze()` raises as warnings. The diagram
-is inline SVG on the shared palette, so the page fetches nothing, for the same
-reason the 3D viewport does not.
-
-Overselling a teaching model is the fastest way to make it untrustworthy the
-moment somebody opens it, which is why "and what it does not model" is a
-section on the landing page rather than a footnote inside the app.
+Hash-based rather than a router — one boolean of navigation does not justify a
+dependency, and a hash needs no server rewrite rule, which matters for a thing
+that has to run off a static host or a demo laptop. The hash is pushed, not
+replaced, so Back returns here. A share link skips the landing entirely:
+whoever followed it was sent a building, not an invitation to read the pitch.
 
 ---
 
@@ -319,7 +338,45 @@ section on the landing page rather than a footnote inside the app.
   than cancel.
 - **No runtime asset fetches in the scene.** No drei `<Environment>` and no
   drei `<Text>` — both pull from a CDN, which would make the viewport depend
-  on the network during a demo. Lighting is local, labels are HTML.
+  on the network during a demo. Lighting is local, labels are HTML. The same
+  rule shapes the world around the building: the sky is a two-colour gradient
+  shader, the lit windows after dark are a hash in a fragment shader, and the
+  star field is 900 seeded directions. No textures, no HDRIs, nothing to fail
+  on venue wifi.
+- **The building stands in a city, and the city means nothing.** `scene/`
+  renders two layers and the line between them is load-bearing. The *design* —
+  `StoreyStack` and `WindArrows` — is engine output and only engine output.
+  The *world* — `World.tsx` over the layout in `scenery.ts` — is streets,
+  pavements, street trees, parked cars, neighbouring blocks and a sky. None of
+  it reads an `AnalysisResult` and none of it feeds one; its only input is the
+  design's total height, which is something the student typed rather than
+  something the engine derived. It earns its place by supplying scale: 40 m
+  means nothing beside an empty grid and a great deal beside four-storey
+  walk-ups and a road with cars on it. The neighbours are deliberately
+  desaturated, so the only saturated colours on screen are still the ones that
+  mean something. This replaced the infinite reference grid — a street with a
+  car on it is a better ruler than a 1 m grid, and it needs no explaining.
+- **The scenery never moves.** `scenery.ts` generates the whole neighbourhood
+  once, at module load, from a fixed seed — not `Math.random`, and not from
+  anything in the store. A city that reshuffled itself as a slider moved would
+  read as output, which is the one thing it must not be.
+- **The sky darkens as the tower climbs.** `lib/sky.ts` maps total height to a
+  time of day: midday, afternoon, golden hour, dusk, then night with the
+  neighbourhood's windows lit. It is the world's only feedback, and it is a
+  pure tested function — `sky.test.ts` asserts the claim the effect makes, that
+  brightness, key-light intensity and star opacity all move one way with
+  height. The sun sinks with it but keeps its bearing, so the building's shadow
+  lengthens instead of swinging across the plot as storeys are added, and it
+  stops short of the horizon because a shadow camera's ground footprint grows
+  as 1/sin(elevation) and the shadow map runs out of texels first.
+- **Flat things at ground level are stacked with `polygonOffset`, not with
+  millimetres.** Grass, carriageway, lane markings and the site pad all sit at
+  y = 0. Depth precision at the far end of a 0.1 m near plane is coarser than
+  the gaps a stack of road markings wants, so height offsets that look right up
+  close shimmer as soon as the camera pulls back to frame a tall building.
+- **A long lens, deliberately.** The camera is 34 degrees, not the usual 45-50.
+  Flattened perspective is what makes a scene read as a model of a place rather
+  than a photograph of one, and the model is the thing being taught.
 - **Carbon and cost are shown as totals and per m2.** Totals alone cannot
   compare a six-storey design with a twelve-storey one. `grossFloorArea_m2()`
   is in the engine so the denominator is traceable too.
@@ -411,6 +468,10 @@ The engine is the part that must not rot, so it is the part with tests.
 - A material with an unresolved `TODO` (null) throws rather than scoring as
   zero. A missing carbon figure must never make the least-documented material
   look like the greenest one.
+- `lib/sky.test.ts` holds the scenery to its one claim: brightness, key-light
+  intensity and star opacity are monotonic in building height, and the sun
+  never drops below the horizon. Colours are 8-bit, so the fine sweep allows
+  one rounding level and a coarse sweep is strict.
 - `ai/guard.test.ts` is written from the attacker's side: what could a model
   say that is wrong and still slip through? It covers invented forces,
   invented safety factors, predicted outcomes, and the dimension-confusion

@@ -1,151 +1,160 @@
 /**
  * The front door.
  *
- * Everything claimed here is claimed by the engine too — the drift ratios in
- * the diagram are real output for the default six-storey design, and the
- * limitations section is the same list `analyze()` raises as warnings. A
- * landing page that oversells a teaching model is the fastest way to make the
- * model untrustworthy the moment somebody opens it.
+ * Ballast is a tool a fourteen year old should want to open, so the page is
+ * warm paper, rounded blocks and short sentences rather than the studio's dark
+ * instrument panel. The two do not match, deliberately: this is the box the
+ * game comes in, and the studio is the game.
  *
- * No imported artwork: the diagram is inline SVG using the shared palette, so
- * the page has nothing to fetch and cannot render wrong because an asset was
- * slow. Same rule as the 3D viewport.
+ * The look is built from two ideas, in this order. Primary is *charming* —
+ * chunky rounded shapes, sticker shadows, a pastel tower that leans a bit.
+ * Secondary is *pixel*, used as seasoning: the small labels, the step numbers,
+ * the clouds and the gust. Pixel is an accent here rather than the whole
+ * costume, because a page rendered entirely in a pixel font is hard to read
+ * and stops being charming about two paragraphs in.
+ *
+ * Everything the page claims, the engine also claims. The tower leans because
+ * drift is real, the lower blocks are the loaded ones because storey shear
+ * accumulates downward, and the "upfront about" list is the same set
+ * `analyze()` raises as warnings. Nothing here is fetched: the illustration is
+ * inline SVG and the fonts are self-hosted, so the page cannot come up wrong
+ * because a CDN was slow.
  */
 
-import { BAND_HEX, WIND_HEX, type UtilizationBand } from '@/lib/palette.ts'
+const INK = '#2f2748'
 
 /**
- * The default design's per-storey drift, ground floor first — real numbers
- * from the engine, not decoration. Drift is worst at the bottom because storey
- * shear accumulates downward: the ground floor carries every storey above it.
+ * One isometric block: a top rhombus and two side faces, on the usual 2:1
+ * isometric grid where a half-width of `hw` gives a half-depth of `hw / 2`.
+ * `y` is the centre of the top face, so a block stacks on the one below by
+ * sitting at that block's `y` minus its own height.
  */
-const DEMO_STOREYS: ReadonlyArray<{ drift: string; band: UtilizationBand }> = [
-  { drift: 'h/769', band: 'fail' },
-  { drift: 'h/897', band: 'caution' },
-  { drift: 'h/1081', band: 'caution' },
-  { drift: 'h/1400', band: 'safe' },
-  { drift: 'h/2050', band: 'safe' },
-  { drift: 'h/4015', band: 'safe' },
+function Block({
+  cx,
+  y,
+  hw,
+  h,
+  top,
+  left,
+  right,
+}: {
+  cx: number
+  y: number
+  hw: number
+  h: number
+  top: string
+  left: string
+  right: string
+}) {
+  const hh = hw / 2
+  return (
+    <g>
+      <polygon
+        points={`${cx},${y - hh} ${cx + hw},${y} ${cx},${y + hh} ${cx - hw},${y}`}
+        fill={top}
+      />
+      <polygon
+        points={`${cx - hw},${y} ${cx},${y + hh} ${cx},${y + hh + h} ${cx - hw},${y + h}`}
+        fill={left}
+      />
+      <polygon
+        points={`${cx + hw},${y} ${cx},${y + hh} ${cx},${y + hh + h} ${cx + hw},${y + h}`}
+        fill={right}
+      />
+    </g>
+  )
+}
+
+/**
+ * The tower, bottom block first. It widens downward and leans downwind at the
+ * top, which is what drift actually looks like — the storeys near the ground
+ * carry every floor above them, so they are the ones being worked hardest.
+ */
+const TOWER = [
+  { cx: 200, y: 300, hw: 110, h: 34, top: '#c3cdf9', left: '#9fabec', right: '#8794df' },
+  { cx: 200, y: 268, hw: 98, h: 32, top: '#c6c4f7', left: '#a5a2ea', right: '#8f8bdd' },
+  { cx: 202, y: 238, hw: 86, h: 30, top: '#cebef4', left: '#b09ee7', right: '#9a88da' },
+  { cx: 205, y: 210, hw: 74, h: 28, top: '#d9bbf0', left: '#bd9be3', right: '#a785d6' },
+  { cx: 210, y: 184, hw: 62, h: 26, top: '#e7b8ea', left: '#d097dc', right: '#ba81cf' },
+  { cx: 218, y: 160, hw: 50, h: 24, top: '#f5b0df', left: '#e28fca', right: '#cf77b9' },
 ]
 
-const STOREY_H = 42
-const BASE_Y = 336
-const LEFT = 148
-const WIDTH = 118
+/** A chunky three-row pixel cloud, drawn on a grid of `s`-sized squares. */
+function PixelCloud({ x, y, s }: { x: number; y: number; s: number }) {
+  return (
+    <g fill="#ffffff" opacity="0.9">
+      <rect x={x + 2 * s} y={y} width={3 * s} height={s} />
+      <rect x={x + s} y={y + s} width={5 * s} height={s} />
+      <rect x={x} y={y + 2 * s} width={7 * s} height={s} />
+    </g>
+  )
+}
 
-function BuildingDiagram() {
+/** Pixel gust lines. Longer and denser near the top, where the wind is stronger. */
+function PixelGust({ x, y, s, run }: { x: number; y: number; s: number; run: number }) {
+  return (
+    <g fill="#56c2ec">
+      <rect x={x} y={y} width={run * s} height={s} />
+      <rect x={x + (run + 2) * s} y={y} width={2 * s} height={s} />
+    </g>
+  )
+}
+
+function TowerScene() {
   return (
     <svg
-      viewBox="0 0 340 372"
-      className="h-auto w-full max-w-sm"
+      viewBox="0 0 400 400"
+      className="h-auto w-full max-w-md"
       role="img"
-      aria-label="A six-storey building under wind load. Storeys are coloured by how hard they are working; the ground storey is over its drift limit at h/769 while the top storey has reserve at h/4015."
+      aria-label="An isometric tower of six stacked pastel blocks, widest at the bottom and leaning slightly at the top, with pixel-art clouds and wind gusts blowing against it."
     >
-      <defs>
-        <marker
-          id="ballast-arrow"
-          markerWidth="7"
-          markerHeight="7"
-          refX="6"
-          refY="3.5"
-          orient="auto"
-        >
-          <path d="M0,0 L7,3.5 L0,7 z" fill={WIND_HEX} />
-        </marker>
-      </defs>
+      <PixelCloud x={22} y={40} s={7} />
+      <PixelCloud x={300} y={78} s={5} />
 
-      {DEMO_STOREYS.map((storey, i) => {
-        const y = BASE_Y - (i + 1) * STOREY_H
-        const midY = BASE_Y - (i + 0.5) * STOREY_H
-        // Wind pressure grows with height (the Kz profile), so the arrows do.
-        const arrow = 28 + i * 9
-        return (
-          <g key={storey.drift}>
-            <line
-              x1={LEFT - 12 - arrow}
-              y1={midY}
-              x2={LEFT - 14}
-              y2={midY}
-              stroke={WIND_HEX}
-              strokeWidth="1.5"
-              markerEnd="url(#ballast-arrow)"
-            />
-            <rect
-              x={LEFT}
-              y={y + 2}
-              width={WIDTH}
-              height={STOREY_H - 4}
-              rx="1.5"
-              fill={BAND_HEX[storey.band]}
-              fillOpacity="0.18"
-              stroke={BAND_HEX[storey.band]}
-              strokeWidth="1.25"
-            />
-            <text
-              x={LEFT + WIDTH + 12}
-              y={midY + 4}
-              className="fill-neutral-500 text-[11px] tabular-nums"
-            >
-              {storey.drift}
-            </text>
-          </g>
-        )
-      })}
+      {/* Gusts hit the upper storeys hardest, which is what the Kz profile says. */}
+      <PixelGust x={26} y={140} s={6} run={7} />
+      <PixelGust x={40} y={166} s={6} run={5} />
+      <PixelGust x={30} y={196} s={6} run={4} />
 
-      {/* Foundation and ground. */}
-      <rect
-        x={LEFT - 10}
-        y={BASE_Y}
-        width={WIDTH + 20}
-        height="12"
-        fill="#292524"
-        stroke="#44403c"
-        strokeWidth="1"
-      />
-      <line
-        x1="24"
-        y1={BASE_Y + 12}
-        x2="316"
-        y2={BASE_Y + 12}
-        stroke="#44403c"
-        strokeWidth="1"
-      />
-      <text x="24" y={BASE_Y + 30} className="fill-neutral-600 text-[11px]">
-        150 km/h gust · Exposure C
-      </text>
+      {/* Ground shadow, flattened to sit on the isometric plane. */}
+      <ellipse cx="200" cy="352" rx="128" ry="26" fill={INK} opacity="0.08" />
+
+      {TOWER.map((block) => (
+        <Block key={block.y} {...block} />
+      ))}
     </svg>
   )
 }
 
-function Dial({
-  label,
-  value,
-  caption,
-  fill,
-  colour,
+function PixelRule() {
+  return (
+    <div className="flex gap-1.5" aria-hidden="true">
+      {['bg-coral', 'bg-blossom', 'bg-lilac', 'bg-bloom', 'bg-mint'].map((tone) => (
+        <span key={tone} className={`size-2 ${tone}`} />
+      ))}
+    </div>
+  )
+}
+
+/** A card with a hard offset shadow — a sticker rather than a floating pane. */
+function Card({
+  tone,
+  title,
+  children,
+  tilt,
 }: {
-  label: string
-  value: string
-  caption: string
-  /** 0-1, how far the bar runs. */
-  fill: number
-  colour: string
+  tone: string
+  title: string
+  children: React.ReactNode
+  tilt: string
 }) {
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
-      <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">
-        {label}
-      </div>
-      <div className="mt-1 text-2xl tabular-nums text-neutral-100">{value}</div>
-      <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-neutral-800">
-        <div
-          className="h-full rounded-full"
-          style={{ width: `${fill * 100}%`, backgroundColor: colour }}
-        />
-      </div>
-      <p className="mt-3 text-[0.75rem] leading-relaxed text-neutral-500">
-        {caption}
-      </p>
+    <div
+      className={`rounded-2xl border-[3px] border-ink bg-white p-5 shadow-[5px_5px_0_0_var(--color-ink)] ${tilt}`}
+    >
+      <span className={`inline-block size-5 rounded-md border-2 border-ink ${tone}`} />
+      <h3 className="mt-3 font-display text-lg text-ink">{title}</h3>
+      <p className="mt-1.5 text-sm leading-relaxed text-ink/70">{children}</p>
     </div>
   )
 }
@@ -155,19 +164,15 @@ function Step({
   title,
   children,
 }: {
-  n: number
+  n: string
   title: string
   children: React.ReactNode
 }) {
   return (
-    <div className="border-t border-neutral-900 pt-4">
-      <div className="text-[0.65rem] tabular-nums text-neutral-600">
-        0{n}
-      </div>
-      <h3 className="mt-1 text-sm font-medium text-neutral-100">{title}</h3>
-      <p className="mt-1.5 text-[0.8rem] leading-relaxed text-neutral-500">
-        {children}
-      </p>
+    <div>
+      <span className="font-pixel text-3xl text-coral">{n}</span>
+      <h3 className="mt-1 font-display text-lg text-ink">{title}</h3>
+      <p className="mt-1.5 text-sm leading-relaxed text-ink/70">{children}</p>
     </div>
   )
 }
@@ -178,195 +183,193 @@ export interface LandingProps {
 
 export function Landing({ onOpenStudio }: LandingProps) {
   return (
-    <div className="h-screen overflow-y-auto bg-neutral-950 font-sans text-neutral-100">
+    <div className="h-screen overflow-y-auto bg-paper font-body text-ink">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
-        <span className="text-sm font-semibold tracking-tight">Ballast</span>
+        <span className="font-display text-xl tracking-tight">Ballast</span>
         <button
           type="button"
           onClick={onOpenStudio}
-          className="rounded border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
+          className="rounded-full border-[3px] border-ink bg-white px-4 py-1.5 font-display text-sm shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
         >
-          Open the studio
+          Start building
         </button>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 pb-24">
-        <section className="grid items-center gap-10 pt-10 pb-20 md:grid-cols-[1.15fr_1fr] md:pt-16">
+      <main className="mx-auto max-w-5xl px-6 pb-20">
+        <section className="grid items-center gap-8 pt-6 pb-16 md:grid-cols-[1.1fr_1fr] md:pt-12">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-wind">
-              Structural climate resilience
+            <p className="font-pixel text-sm tracking-widest text-bloom">
+              STACK → STORM → REBUILD
             </p>
-            <h1 className="mt-4 text-4xl leading-[1.1] font-semibold tracking-tight text-neutral-50 md:text-5xl">
-              Every kilogram that keeps a building standing costs the planet
-              something.
+            <h1 className="mt-3 font-display text-4xl leading-[1.08] text-ink md:text-6xl">
+              Build a tower.
+              <br />
+              Then try to knock it over.
             </h1>
-            <p className="mt-5 max-w-xl text-base leading-relaxed text-neutral-400">
-              Ballast puts a structure in a real storm and asks you to make it
-              survive — while counting what that safety costs in embodied
-              carbon and in dollars. Move a slider and all three numbers move at
-              once. That tension is the whole exercise.
+            <p className="mt-5 max-w-lg text-base leading-relaxed text-ink/75">
+              Ballast is a workshop for things that have to stay standing. Stack
+              up floors, turn the wind all the way up, and watch which parts
+              start to wobble. Then make it tougher — without costing the earth.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-7 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={onOpenStudio}
-                className="rounded-md border border-wind/60 bg-wind/10 px-5 py-2.5 text-sm text-neutral-100 hover:bg-wind/20"
+                className="rounded-full border-[3px] border-ink bg-coral px-7 py-3 font-display text-lg text-white shadow-[5px_5px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
               >
-                Open the studio
+                Start building
               </button>
               <a
-                href="#physics"
-                className="rounded-md px-3 py-2.5 text-sm text-neutral-500 hover:text-neutral-300"
+                href="#how"
+                className="rounded-full px-4 py-3 font-display text-base text-ink/60 hover:text-ink"
               >
-                How the numbers are made
+                How does it work?
               </a>
             </div>
           </div>
           <div className="flex justify-center md:justify-end">
-            <BuildingDiagram />
+            <TowerScene />
           </div>
         </section>
 
-        <section className="border-t border-neutral-900 py-16">
-          <h2 className="text-xl font-medium tracking-tight text-neutral-100">
-            Three numbers. No score.
+        <section className="rounded-3xl border-[3px] border-ink bg-bloom/15 px-6 py-10 md:px-10">
+          <PixelRule />
+          <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
+            Three things to juggle
           </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-neutral-400">
-            Anyone can make a building safe by making it heavier. The question
-            worth asking a student is what they spent doing it. Ballast will not
-            collapse safety, carbon and cost into a single rating, because a
-            single rating is exactly where that question goes to die.
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink/75">
+            You can make almost anything survive a storm if you throw enough
+            concrete at it. The trick is doing it without wrecking your budget
+            or the planet. Ballast keeps all three on screen at once and never
+            squashes them into a single score — that is exactly where the
+            interesting part disappears.
           </p>
-          <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            <Dial
-              label="Safety factor"
-              value="1.62"
-              caption="Overturning and sliding, against a target of 1.50. Below it, the building is not standing up in the storm you chose."
-              fill={0.93}
-              colour={BAND_HEX.caution}
-            />
-            <Dial
-              label="Embodied carbon"
-              value="412 t"
-              caption="A1–A3, structural frame only. Shown as a total and per square metre, because a taller building loses on totals and can still win on intensity."
-              fill={0.62}
-              colour={BAND_HEX.safe}
-            />
-            <Dial
-              label="Cost"
-              value="$1.4M"
-              caption="Indicative rates per cubic metre. The weakest data in the project, and flagged as such on every single analysis."
-              fill={0.55}
-              colour={BAND_HEX.safe}
-            />
+          <div className="mt-8 grid gap-5 sm:grid-cols-3">
+            <Card tone="bg-mint" title="Will it stand up?" tilt="-rotate-1">
+              How much stronger your tower is than the storm you picked. Dip
+              under 1.5 and it is in real trouble.
+            </Card>
+            <Card tone="bg-lilac" title="What did the planet pay?" tilt="rotate-1">
+              The carbon baked into every beam and slab you used. Concrete is
+              strong and expensive in exactly this way.
+            </Card>
+            <Card tone="bg-blossom" title="What did you pay?" tilt="-rotate-1">
+              Materials cost money too. The cheapest tower and the greenest
+              tower are almost never the same tower.
+            </Card>
           </div>
         </section>
 
-        <section className="border-t border-neutral-900 py-16">
-          <h2 className="text-xl font-medium tracking-tight text-neutral-100">
+        <section id="how" className="py-16">
+          <PixelRule />
+          <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             How it works
           </h2>
-          <div className="mt-8 grid gap-6 sm:grid-cols-3">
-            <Step n={1} title="Start with a structure">
-              Six storeys of cross-laminated timber on a raft foundation. Change
-              the height, the plan, the material and the lateral system —
-              shear walls, a braced frame, a moment frame, or nothing at all.
+          <div className="mt-8 grid gap-8 sm:grid-cols-3">
+            <Step n="01" title="Stack your floors">
+              Pick how tall and how wide, then choose what it is made of —
+              timber, steel, concrete, bamboo, even rammed earth.
             </Step>
-            <Step n={2} title="Bring the weather">
-              A three-second gust at your chosen exposure, resolved into a load
-              on every storey. Watch the stack turn amber and then red from the
-              ground up, where the accumulated shear is worst.
+            <Step n="02" title="Turn up the storm">
+              Set the wind speed and where you are: open field, city street, or
+              right on the coast. Every floor gets pushed.
             </Step>
-            <Step n={3} title="Redesign, and pay for it">
-              Concrete buys stiffness and costs carbon. A wider base buys
-              overturning resistance and costs floor area. Every dial carries
-              its change against where you started.
+            <Step n="03" title="Find the wobbly bits">
+              Floors glow amber, then red, when they are working too hard —
+              usually the ones near the ground, holding everything above them.
             </Step>
           </div>
         </section>
 
-        <section id="physics" className="border-t border-neutral-900 py-16">
-          <h2 className="text-xl font-medium tracking-tight text-neutral-100">
-            The numbers are not opinions
+        <section className="rounded-3xl border-[3px] border-ink bg-white px-6 py-10 shadow-[6px_6px_0_0_var(--color-ink)] md:px-10">
+          <PixelRule />
+          <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
+            These are real numbers
           </h2>
-          <div className="mt-6 grid gap-10 md:grid-cols-2">
-            <div className="space-y-4 text-sm leading-relaxed text-neutral-400">
+          <div className="mt-5 grid gap-8 md:grid-cols-[1.3fr_1fr]">
+            <div className="space-y-4 text-sm leading-relaxed text-ink/75">
               <p>
-                Every value on screen comes out of a deterministic engine:
-                ASCE 7-16 wind loads, storey stiffness and drift, overturning,
-                sliding, and per-storey bending. No sampling, no estimation.
-                Drag a slider back and you get the number you had before.
+                Every number in Ballast comes out of the same equations a
+                structural engineer would use — wind pressure, how far each
+                floor sways, whether the whole thing tips over. Nothing is
+                guessed and nothing is random. Slide the wind back down and you
+                get the number you had before.
               </p>
               <p>
-                Every coefficient carries either a clause reference or an
-                explicit statement of how it was calibrated and against what.
-                The test suite opens with a single-storey case worked by hand,
-                all thirteen steps of the arithmetic written out in the file, so
-                that changing a constant tells you exactly which step moved.
-              </p>
-              <p className="text-neutral-300">
-                The language model reads those numbers and explains them. It
-                never produces one — and that is not left to the prompt. Every
-                reply is re-read by a guard that flags any figure which does not
-                trace back to the engine output the model was given.
+                There is an AI helper that explains what is going wrong and
+                suggests things to try. It is not allowed to invent numbers —
+                and we do not simply trust it on that. Every answer it gives is
+                checked against the engine first, and anything that does not
+                match is flagged before it reaches you.
               </p>
             </div>
-            <ul className="space-y-3 text-sm">
+            <ul className="space-y-2.5">
               {[
-                ['Deterministic', 'Same design, same numbers, every time'],
-                ['Cited', 'A clause reference behind every coefficient'],
-                ['Checked', 'Model replies audited figure by figure'],
-                ['Offline', 'The simulation needs no network at all'],
+                ['Real equations', 'ASCE 7 wind loads, cited clause by clause'],
+                ['Same every time', 'No dice rolls anywhere in the maths'],
+                ['The AI cannot fib', 'Its answers are audited figure by figure'],
+                ['Works offline', 'The simulation needs no internet at all'],
               ].map(([term, detail]) => (
                 <li
                   key={term}
-                  className="flex gap-4 border-t border-neutral-900 pt-3"
+                  className="rounded-xl border-2 border-ink/15 bg-paper px-3 py-2"
                 >
-                  <span className="w-28 shrink-0 text-neutral-200">{term}</span>
-                  <span className="text-neutral-500">{detail}</span>
+                  <span className="font-display text-sm text-ink">{term}</span>
+                  <span className="block text-xs text-ink/60">{detail}</span>
                 </li>
               ))}
             </ul>
           </div>
         </section>
 
-        <section className="border-t border-neutral-900 py-16">
-          <h2 className="text-xl font-medium tracking-tight text-neutral-100">
-            And what it does not model
+        <section className="py-16">
+          <PixelRule />
+          <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
+            Stuff we are upfront about
           </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-neutral-400">
-            A teaching model that hides its assumptions teaches the wrong thing.
-            These are the edges, and Ballast raises them as warnings on the
-            analysis itself when a design walks past one.
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink/75">
+            Ballast is for learning, not for signing off a real building. A
+            model that hides its limits teaches the wrong lesson, so here is
+            where ours stops — and it says so on screen when you walk past one.
           </p>
-          <ul className="mt-6 grid gap-x-10 gap-y-3 text-[0.8rem] leading-relaxed text-neutral-500 sm:grid-cols-2">
+          <ul className="mt-6 grid gap-3 sm:grid-cols-2">
             {[
-              'Along-wind load only — no across-wind or torsional cases.',
-              'A rigid building, which stops being true above about fifteen storeys.',
-              'A flat site, with no topographic speed-up.',
-              'Structural self-weight only; no superimposed dead or live load.',
-              'Carbon is cradle-to-gate, frame only — a whole building is higher.',
-              'Costs are indicative, not surveyed.',
+              'Wind only for now. Earthquakes and floods are next.',
+              'The wind blows from one direction at a time.',
+              'Towers past about fifteen floors get less accurate.',
+              'Carbon counts the frame, not the whole finished building.',
+              'Prices are ballpark figures, not real quotes.',
+              'The ground is flat — no hills to speed the wind up.',
             ].map((limit) => (
-              <li key={limit} className="border-t border-neutral-900 pt-3">
+              <li
+                key={limit}
+                className="rounded-xl border-2 border-ink/15 px-4 py-3 text-sm leading-relaxed text-ink/70"
+              >
                 {limit}
               </li>
             ))}
           </ul>
         </section>
 
-        <section className="border-t border-neutral-900 py-16 text-center">
-          <h2 className="text-2xl font-medium tracking-tight text-neutral-100">
-            Put a building in a storm.
+        <section className="rounded-3xl border-[3px] border-ink bg-coral/15 px-6 py-14 text-center">
+          <h2 className="font-display text-3xl text-ink md:text-4xl">
+            Got a tower in mind?
           </h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink/70">
+            No account, no download. It opens straight into the studio.
+          </p>
           <button
             type="button"
             onClick={onOpenStudio}
-            className="mt-6 rounded-md border border-wind/60 bg-wind/10 px-6 py-3 text-sm text-neutral-100 hover:bg-wind/20"
+            className="mt-7 rounded-full border-[3px] border-ink bg-coral px-8 py-3.5 font-display text-lg text-white shadow-[5px_5px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
           >
-            Open the studio
+            Start building
           </button>
         </section>
+
+        <p className="pt-10 text-center font-pixel text-xs tracking-widest text-ink/40">
+          BALLAST · BUILT FOR PEOPLE WHO LIKE KNOCKING THINGS DOWN
+        </p>
       </main>
     </div>
   )
