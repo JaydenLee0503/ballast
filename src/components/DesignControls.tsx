@@ -10,6 +10,8 @@
 
 import {
   BUILDABLE_SYSTEMS,
+  EXPOSURE_CATEGORIES,
+  LATERAL_SYSTEMS,
   MATERIAL_LIBRARY,
   type ExposureCategory,
   type LateralSystem,
@@ -19,17 +21,10 @@ import {
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
   STOREY_COUNT_LIMITS,
-  useDesignStore,
-} from '@/store/design.ts'
+} from '@/lib/limits.ts'
+import { useDesignStore } from '@/store/design.ts'
 
 const MATERIALS = [...MATERIAL_LIBRARY.values()]
-const LATERAL_SYSTEMS: readonly LateralSystem[] = [
-  'shear-wall',
-  'braced-frame',
-  'moment-frame',
-  'none',
-]
-const EXPOSURES: readonly ExposureCategory[] = ['B', 'C', 'D']
 const EXPOSURE_HINT: Readonly<Record<ExposureCategory, string>> = {
   B: 'Urban / wooded',
   C: 'Open terrain',
@@ -168,7 +163,7 @@ export function DesignControls() {
         <div>
           <span className="text-xs text-neutral-400">Exposure category</span>
           <div className="mt-1.5 grid grid-cols-3 gap-1">
-            {EXPOSURES.map((category) => (
+            {EXPOSURE_CATEGORIES.map((category) => (
               <button
                 key={category}
                 type="button"

@@ -7,7 +7,56 @@
  * never be — if you add one, cite it or explain how you tuned it.
  */
 
-import type { LateralSystem, StructuralClass } from './types.ts'
+import type {
+  ExposureCategory,
+  FoundationType,
+  LateralSystem,
+  StructuralClass,
+} from './types.ts'
+
+// ---------------------------------------------------------------------------
+// Domain enumerations
+// ---------------------------------------------------------------------------
+
+/**
+ * The union members of the domain enums, as runtime arrays.
+ *
+ * The types in types.ts vanish at compile time, so anything that has to make
+ * a decision about a value it did not construct itself — a `<select>` filling
+ * its options, a parser deciding whether a saved design is loadable — needs
+ * the list to exist at runtime. Without these it gets rebuilt by hand at each
+ * call site, and the copies drift.
+ *
+ * `exhaustiveList` checks both directions: a member that is not in the union
+ * fails the `readonly Union[]` constraint, and a union member missing from the
+ * array makes the parameter type `never`, so the call stops compiling. Add a
+ * lateral system to the union and this file breaks until the array knows.
+ */
+function exhaustiveList<Union extends string>() {
+  return <const T extends readonly Union[]>(
+    values: [Union] extends [T[number]] ? T : never,
+  ): T => values
+}
+
+export const LATERAL_SYSTEMS = exhaustiveList<LateralSystem>()([
+  'shear-wall',
+  'braced-frame',
+  'moment-frame',
+  'none',
+])
+
+export const EXPOSURE_CATEGORIES = exhaustiveList<ExposureCategory>()([
+  'B',
+  'C',
+  'D',
+])
+
+export const FOUNDATION_TYPES = exhaustiveList<FoundationType>()([
+  'slab-on-grade',
+  'strip-footing',
+  'raft',
+  'piled',
+])
 
 // ---------------------------------------------------------------------------
 // Wind: ASCE 7-16 coefficients

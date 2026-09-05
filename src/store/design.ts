@@ -13,6 +13,14 @@
  */
 
 import { create } from 'zustand'
+import {
+  ANCHOR_CAPACITY_LIMITS_KN,
+  clamp,
+  GUST_SPEED_LIMITS_KMH,
+  PLAN_WIDTH_LIMITS_M,
+  STOREY_COUNT_LIMITS,
+} from '@/lib/limits.ts'
+import type { SavedDesign } from '@/persistence'
 import type {
   ExposureCategory,
   LateralSystem,
@@ -20,22 +28,6 @@ import type {
   Structure,
   WindHazard,
 } from '@/engine'
-
-/**
- * Editing limits. These bound the UI controls, not the engine — `analyze()`
- * will happily evaluate a 40-storey rammed-earth tower and warn about it.
- * They exist so a slider cannot produce input that fails validation, which
- * keeps the viewport from ever having nothing to draw.
- */
-export const STOREY_COUNT_LIMITS = { min: 1, max: 24 } as const
-export const PLAN_WIDTH_LIMITS_M = { min: 4, max: 60 } as const
-export const GUST_SPEED_LIMITS_KMH = { min: 0, max: 300 } as const
-export const ANCHOR_CAPACITY_LIMITS_KN = { min: 0, max: 5000 } as const
-
-function clamp(value: number, limits: { min: number; max: number }): number {
-  if (!Number.isFinite(value)) return limits.min
-  return Math.min(limits.max, Math.max(limits.min, value))
-}
 
 /**
  * Starting point: a mid-rise CLT block. Chosen because it sits in the
@@ -85,6 +77,18 @@ export interface DesignState {
   setStoreySystem: (index: number, lateralSystem: LateralSystem) => void
   setAllMaterial: (materialId: string) => void
   setAllSystem: (lateralSystem: LateralSystem) => void
+
+  /**
+   * Replace the whole design, as when opening a saved one or a shared link.
+   *
+   * It takes a `SavedDesign` rather than a loose structure and hazard because
+   * the only ways to hold one are `parseDesign`, which has checked every field
+   * against the same limits the controls enforce, and `createSavedDesign`,
+   * which is given state that was already in the store. No clamping happens
+   * here: a value that needed clamping got past the parser, and quietly
+   * repairing it would hide that.
+   */
+  loadDesign: (design: SavedDesign) => void
 
   reset: () => void
 }
@@ -211,6 +215,15 @@ export const useDesignStore = create<DesignState>()((set) => ({
     set((state) => ({
       structure: withAllStoreys(state.structure, { lateralSystem }),
     })),
+
+  loadDesign: (design) =>
+    set({
+      structure: design.structure,
+      hazard: design.hazard,
+      // The loaded design has its own storeys; a selection pointing into the
+      // previous one would highlight an unrelated floor.
+      selectedStoreyIndex: null,
+    }),
 
   reset: () =>
     set({

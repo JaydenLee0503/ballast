@@ -33,6 +33,10 @@ The AI layer's legitimate jobs: explaining *why* a storey is red, proposing
 design changes to try, narrating the tradeoff between the three dials, and
 turning a ScoreCard into prose a first-year student understands.
 
+And the rule is not left to the prompt alone. `ai/guard.ts` re-reads every
+reply and flags any figure that does not trace back to the context the model
+was given. See "The AI layer" below.
+
 ---
 
 ## Architecture
@@ -54,6 +58,12 @@ src/
   store/
     design.ts          zustand: structure + hazard + selection. editing only.
     useAnalysis.ts     the bridge: analyze() memoised on (structure, hazard)
+    sharedDesign.ts    opens a design out of the URL fragment, at boot
+  persistence/
+    schema.ts          the saved-design format, and the parser that guards it
+    library.ts         DesignLibrary + the localStorage implementation
+    share.ts           a design encoded into a link
+    index.ts           public surface
   components/
     Viewport.tsx       r3f canvas, lighting, camera, legend
     scene/
@@ -62,10 +72,21 @@ src/
     ScorePanel.tsx     the three dials + governing failure mode
     StoreyTable.tsx    per-storey breakdown, selectable rows
     DesignControls.tsx every slider and select
+    SavedDesigns.tsx   save, reopen, share
+  ai/
+    types.ts           CritiqueContext + Critique. no imports, by design
+    context.ts         AnalysisResult -> the facts the model may see
+    prompt.ts          the system rules + the facts, as messages
+    parse.ts           tolerant JSON extraction from the reply
+    guard.ts           flags figures that do not trace back to the context
+    client.ts          POSTs to /api/critique, then parses and guards
   lib/
     palette.ts         utilisation colour bands (source of truth for colour)
     format.ts          display formatting only; no arithmetic that means anything
-  (later) ai/, lib/supabase/
+    limits.ts          editing bounds, shared by the controls and the parser
+plugins/
+  critiqueApi.ts       /api/critique on the dev + preview server. holds the key
+  (later) persistence/supabase.ts   a second DesignLibrary, behind auth
 ```
 
 ### Boundaries
@@ -75,7 +96,9 @@ src/
   makes the engine testable in milliseconds and portable to a worker or a
   server later.
 - **The rest of the app imports from `@/engine` (i.e. `engine/index.ts`), never
-  from a module inside it.** That keeps the internals free to change. The `@`
+  from a module inside it.** The same rule holds for `@/persistence`, which is
+  what lets a Supabase adapter land behind `DesignLibrary` without a call site
+  changing. That keeps the internals free to change. The `@`
   alias is configured in both `vite.config.ts` and `tsconfig.app.json`; keep
   them in step.
 - **Engine results are derived, never stored.** `useAnalysis()` recomputes
@@ -135,6 +158,110 @@ documented in situ; this is the index.
 
 ---
 
+## The AI layer
+
+`analyze()` produces the numbers; this layer produces sentences about them.
+
+**The flow.** `context.ts` turns an `AnalysisResult` into a `CritiqueContext`
+-- a flat sheet of already-rounded facts, plus the material library so
+suggestions stay buildable. `prompt.ts` renders that into a system turn (the
+rules) and a user turn (the facts). `plugins/critiqueApi.ts` calls the
+provider. `parse.ts` recovers the JSON. `guard.ts` checks it. Every step
+except the network call is pure and tested.
+
+**Rounding happens once, in `context.ts`.** The model quotes those values and
+the guard checks against those values, which is what makes "did it quote us
+correctly?" a decidable question rather than a floating-point argument.
+
+**The guard is unit-scoped.** A claimed force is compared only against forces,
+a claimed cost only against costs. Units are derived from field names, which
+is why `CritiqueContext` follows the unit-suffix convention as strictly as the
+engine does -- rename `carbon_kgCO2e` to something tidier and you silently
+move it into the unverifiable bucket. `context.test.ts` asserts that only the
+genuinely dimensionless fields land there.
+
+Its limits, honestly: it only inspects figures with a unit, an `h/N` drift
+ratio, or a stated safety factor, so an invented bare number in prose passes.
+Tolerance is 0.5% relative, so an invention within 0.5% of a real value of the
+same dimension passes. Both are deliberate -- a guard that cried wolf would be
+turned off.
+
+**The key never reaches the browser.** The provider variables are read in
+`vite.config.ts` via `loadEnv(mode, cwd, '')` and handed to the plugin. They
+are deliberately not `VITE_`-prefixed, because that prefix is exactly what
+would inline them into the bundle.
+
+**Provider.** Featherless (`https://api.featherless.ai/v1`), which is
+OpenAI-compatible, so the call is a plain `fetch` and there is no SDK
+dependency. Model id lives in `.env`; there is no default, because a silent
+fallback to a model you did not choose is worse than an error. Pointing at any
+other OpenAI-compatible provider is a `FEATHERLESS_BASE_URL` change.
+
+**`/api/critique` is dev and preview only.** It is a Vite middleware, not a
+production server. Deploying means moving those three steps -- build messages,
+call provider, return text -- into a serverless or edge function.
+`buildMessages` is pure and shared, so that is a transport change and nothing
+else.
+
+---
+
+## Saved designs
+
+`persistence/` is a format, a parser and a place to put things. Supabase will
+be a second place; nothing above it should be able to tell.
+
+**A saved design is untrusted input.** It may come from an older build, a
+hand-edited devtools entry, a link a student pasted, or later a row another
+client wrote. The engine has no tolerance for a bad structure — `analyze()`
+throws — and the whole UI hangs off one analysis, so a bad load does not
+corrupt a corner of the app, it replaces the app with an error page. Hence two
+rules in `schema.ts`:
+
+- **Parse, don't cast.** `parseDesign` builds a new object out of values it has
+  checked, one field at a time. It never asserts a type onto its input, so a
+  payload's extra properties die at the boundary instead of riding into React
+  state and back out to storage on the next save.
+- **Reject, don't repair.** An unknown material is refused *by name*, not
+  silently swapped for concrete. Substituting would hand a student a carbon
+  number for a building they did not design — the same failure as an invented
+  number, arriving from a different direction.
+
+`schema.test.ts` ends with the property the module exists for: anything the
+parser accepts, `analyze()` can run.
+
+**One set of bounds.** `lib/limits.ts` holds the editing limits, and both the
+controls and the parser read them. If persistence had its own numbers, a saved
+file could restore a state the sliders can no longer express — 40 storeys on a
+control that stops at 24, with no way back.
+
+**`DesignLibrary` is async, though localStorage is not.** A synchronous
+interface would be honest about this backend and wrong about the next one, and
+the cost of finding that out later is every call site changing at the moment a
+network appears. Every method is declared `async` rather than merely
+Promise-returning, so a failure cannot escape a caller's `.catch()` as a
+synchronous throw.
+
+**Storage is one key per design**, `resilience-studio.design.<id>`. It costs a
+key scan on `list()` and buys two things: a save rewrites one entry rather than
+all of them, and one corrupt record loses one design instead of the library. An
+unreadable record is skipped and left in place — a later version may be able to
+read what this one cannot.
+
+**Share links carry the design.** The payload is the same `SavedDesign`,
+base64url in the URL *fragment*, validated by the same parser — no second
+format and no second set of rules. Fragments are not sent to the server, so a
+student's work stays out of access logs. This is also the half of "saved
+designs" that needs no backend at all: a classroom can pass designs around
+before Supabase exists, and during a demo if the network does not cooperate.
+Measured sizes are in `share.ts` and pinned in `share.test.ts`.
+
+The link is consumed in `main.tsx`, before React renders, not in an effect —
+otherwise the default building paints first and swaps a frame later. The
+fragment is cleared either way: on success because the URL should describe
+where the student is now, on failure so a refresh does not reproduce it.
+
+---
+
 ## UI conventions
 
 - **Coordinate mapping.** The engine works in plan X/Y with height separate;
@@ -168,13 +295,20 @@ values plus a governing failure mode; the UI shows three dials.
 ## Commands
 
 ```
-npm run dev         dev server
+npm run dev         dev server (also serves /api/critique)
 npm test            vitest, single run
 npm run test:watch  vitest, watch mode
 npm run coverage    coverage over src/engine
 npm run typecheck   tsc -b --force
 npm run build       typecheck + production build
 ```
+
+### Environment
+
+Copy `.env.example` to `.env` and fill in `FEATHERLESS_API_KEY` and
+`FEATHERLESS_MODEL`. Without them the app runs fine and the critique panel
+returns a message telling you which one is missing. `.env` is gitignored;
+`.env.example` is not.
 
 ### WSL / Windows drive note
 
@@ -206,6 +340,22 @@ The engine is the part that must not rot, so it is the part with tests.
 - A material with an unresolved `TODO` (null) throws rather than scoring as
   zero. A missing carbon figure must never make the least-documented material
   look like the greenest one.
+- `ai/guard.test.ts` is written from the attacker's side: what could a model
+  say that is wrong and still slip through? It covers invented forces,
+  invented safety factors, predicted outcomes, and the dimension-confusion
+  case where a material density would otherwise excuse a fabricated base
+  shear.
+- `ai/prompt.test.ts` asserts the hard rules are still in the system prompt,
+  so softening them fails the suite rather than quietly changing behaviour.
+- `persistence/schema.test.ts` is the same attacker framing applied to stored
+  data: wrong schema version, unknown material, absurd dimensions, a numeric
+  string, a hazard kind from a future build. It closes with the property the
+  parser exists to hold — everything it accepts, `analyze()` can run.
+- `persistence/library.test.ts` runs against a fake `Storage` rather than
+  jsdom, which keeps the suite in the node environment and lets a test make
+  storage misbehave on demand: throw on read, throw on write, hold a corrupt
+  value. That is the interesting half of the behaviour, and a real
+  localStorage will not do it when asked.
 
 ---
 
@@ -217,10 +367,15 @@ The engine is the part that must not rot, so it is the part with tests.
    `StoreyResult.utilization`, wind arrows from `lateralForce_kN`.
 3. **Zustand store** (done) — structure editing, with `analyze()` derived,
    never stored.
-4. AI critique panel — takes an `AnalysisResult` as context, returns prose.
-5. Supabase — auth and saved designs.
+4. **AI critique panel** (done) — takes an `AnalysisResult` as context,
+   returns prose, and every figure it quotes is checked against that context.
+5. **Saved designs** (done) — a validated format, a `DesignLibrary` backed by
+   localStorage, and share links that carry a design in the URL.
+6. Supabase — auth, and a second `DesignLibrary` so designs follow an account
+   between browsers. The interface it has to satisfy already exists.
 
-Not built yet, by design: AI, Supabase.
+Also outstanding: a production transport for `/api/critique`, and streaming
+(the reply currently arrives in one go).
 
 Known and accepted: the production bundle is ~1.1 MB (three.js). Code-split it
 only if load time actually becomes a problem.

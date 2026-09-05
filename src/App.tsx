@@ -9,14 +9,29 @@
  * nothing else is computing numbers of its own.
  */
 
+import { useState } from 'react'
+import { CritiquePanel } from '@/components/CritiquePanel.tsx'
 import { DesignControls } from '@/components/DesignControls.tsx'
+import { SavedDesigns } from '@/components/SavedDesigns.tsx'
 import { ScorePanel } from '@/components/ScorePanel.tsx'
 import { StoreyTable } from '@/components/StoreyTable.tsx'
 import { Viewport } from '@/components/Viewport.tsx'
 import { useDesignStore } from '@/store/design.ts'
 import { useAnalysis } from '@/store/useAnalysis.ts'
+import { sharedDesignOutcome } from '@/store/sharedDesign.ts'
+
+type RailTab = 'design' | 'saved' | 'critique'
+
+const RAIL_TABS: ReadonlyArray<{ id: RailTab; label: string }> = [
+  { id: 'design', label: 'Design' },
+  { id: 'saved', label: 'Saved' },
+  { id: 'critique', label: 'Critique' },
+]
 
 export default function App() {
+  const [tab, setTab] = useState<RailTab>('design')
+  // Already settled: main.tsx consumed the link before the first render.
+  const shared = sharedDesignOutcome()
   const structure = useDesignStore((state) => state.structure)
   const hazard = useDesignStore((state) => state.hazard)
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
@@ -30,6 +45,16 @@ export default function App() {
         <p className="text-xs text-neutral-500">
           Wind · ASCE 7-style · every number from the engine
         </p>
+        {shared.loadedName !== null && (
+          <p className="ml-auto truncate text-xs text-wind">
+            Opened “{shared.loadedName}” from a link
+          </p>
+        )}
+        {shared.error !== null && (
+          <p className="ml-auto truncate text-xs text-fail" title={shared.error}>
+            That link could not be opened: {shared.error}
+          </p>
+        )}
       </header>
 
       {error !== null || result === null ? (
@@ -63,19 +88,51 @@ export default function App() {
               />
             </section>
 
-            <DesignControls />
+            {/* The scorecard and the storey table stay put above this: they
+                are the numbers, and they should never be a tab away. Only the
+                things you act on -- controls, critique -- share space. */}
+            <nav className="flex gap-1 border-t border-neutral-900 pt-4">
+              {RAIL_TABS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className={`flex-1 rounded px-2 py-1.5 text-xs ${
+                    tab === id
+                      ? 'bg-neutral-800 text-neutral-100'
+                      : 'text-neutral-500 hover:text-neutral-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
 
-            {result.warnings.length > 0 && (
-              <section className="border-t border-neutral-900 pt-4">
-                <h3 className="mb-2 text-[0.65rem] uppercase tracking-wider text-neutral-600">
-                  Modelling caveats
-                </h3>
-                <ul className="space-y-2 text-[0.7rem] leading-relaxed text-caution/80">
-                  {result.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </section>
+            {tab === 'saved' ? (
+              <SavedDesigns structure={structure} hazard={hazard} />
+            ) : tab === 'design' ? (
+              <>
+                <DesignControls />
+
+                {result.warnings.length > 0 && (
+                  <section className="border-t border-neutral-900 pt-4">
+                    <h3 className="mb-2 text-[0.65rem] uppercase tracking-wider text-neutral-600">
+                      Modelling caveats
+                    </h3>
+                    <ul className="space-y-2 text-[0.7rem] leading-relaxed text-caution/80">
+                      {result.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </>
+            ) : (
+              <CritiquePanel
+                result={result}
+                structure={structure}
+                hazard={hazard}
+              />
             )}
           </aside>
         </main>
