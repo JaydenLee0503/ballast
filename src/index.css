@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Resilience Studio surfaces are dark by default: the 3D viewport is the
+   focus and a light chrome washes it out. Tokens live here so the engine's
+   utilization colours (see engine/scoring.ts) have one home. */
+@theme {
+  --color-safe: oklch(0.72 0.15 155);
+  --color-caution: oklch(0.78 0.16 85);
+  --color-fail: oklch(0.63 0.21 25);
+}
