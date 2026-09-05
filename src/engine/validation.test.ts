@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { analyze, StructureValidationError } from './analyze.ts'
 import { MATERIAL_LIBRARY } from './materials.ts'
 import { MaterialDataError } from './materials.ts'
+import { grossFloorArea_m2 } from './sustainability.ts'
 import type { Storey, Structure, WindHazard } from './types.ts'
 
 const storey = (overrides: Partial<Storey> = {}): Storey => ({
@@ -205,5 +206,29 @@ describe('degenerate but legal inputs', () => {
     )
     const carbon = result.storeys.reduce((s, r) => s + r.embodiedCarbon_kgCO2e, 0)
     expect(result.scoreCard.carbonKg).toBeCloseTo(carbon, 6)
+  })
+})
+
+describe('gross floor area', () => {
+  it('sums the plan rectangle of every storey', () => {
+    // 5 storeys x 12 m x 12 m = 5 x 144 = 720 m2.
+    const area = grossFloorArea_m2(
+      structure({ storeys: Array.from({ length: 5 }, () => storey()) }),
+    )
+    expect(area).toBeCloseTo(720, 10)
+  })
+
+  it('respects per-storey plan dimensions, so setbacks reduce it', () => {
+    // 12x12 = 144 at the base, 8x6 = 48 above. Total 192 m2.
+    const area = grossFloorArea_m2(
+      structure({
+        storeys: [storey(), storey({ widthX_m: 8, widthY_m: 6 })],
+      }),
+    )
+    expect(area).toBeCloseTo(192, 10)
+  })
+
+  it('is the denominator for carbon intensity, so it must never be zero for a real structure', () => {
+    expect(grossFloorArea_m2(structure())).toBeGreaterThan(0)
   })
 })

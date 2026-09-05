@@ -51,7 +51,21 @@ src/
     sustainability.ts  quantity take-off -> carbon and cost
     analyze.ts         the single entry point; dispatches on hazard.kind
     index.ts           public surface
-  (later) components/, store/, ai/, lib/supabase/
+  store/
+    design.ts          zustand: structure + hazard + selection. editing only.
+    useAnalysis.ts     the bridge: analyze() memoised on (structure, hazard)
+  components/
+    Viewport.tsx       r3f canvas, lighting, camera, legend
+    scene/
+      StoreyStack.tsx  one box per storey, coloured by utilization
+      WindArrows.tsx   per-storey arrows, length from lateralForce_kN
+    ScorePanel.tsx     the three dials + governing failure mode
+    StoreyTable.tsx    per-storey breakdown, selectable rows
+    DesignControls.tsx every slider and select
+  lib/
+    palette.ts         utilisation colour bands (source of truth for colour)
+    format.ts          display formatting only; no arithmetic that means anything
+  (later) ai/, lib/supabase/
 ```
 
 ### Boundaries
@@ -61,7 +75,14 @@ src/
   makes the engine testable in milliseconds and portable to a worker or a
   server later.
 - **The rest of the app imports from `@/engine` (i.e. `engine/index.ts`), never
-  from a module inside it.** That keeps the internals free to change.
+  from a module inside it.** That keeps the internals free to change. The `@`
+  alias is configured in both `vite.config.ts` and `tsconfig.app.json`; keep
+  them in step.
+- **Engine results are derived, never stored.** `useAnalysis()` recomputes
+  `analyze()` from `(structure, hazard)` and memoises on object identity. That
+  works only because every store action replaces the structure rather than
+  mutating it. Caching a ScoreCard in the store would give the app two sources
+  of truth for a safety factor, and the stale one would be the one on screen.
 - `analyze(structure, hazard, library)` is the whole API. If a component needs
   a number, it comes from an `AnalysisResult`.
 
@@ -111,6 +132,32 @@ documented in situ; this is the index.
 | Section modulus smears material across the plan | `stability.ts` `effectiveSectionModulus_m3` | Conservative by ~2x; fine for relative utilisation, not for member sizing |
 | Carbon is A1-A3, frame only, no sequestration | `sustainability.ts` header | A whole-building figure would be much higher |
 | Costs are indicative, not surveyed | `data/materials.json` | Flagged as a warning on every analysis. The weakest data in the project |
+
+---
+
+## UI conventions
+
+- **Coordinate mapping.** The engine works in plan X/Y with height separate;
+  three.js is Y-up. So `widthX_m -> three X`, `widthY_m -> three Z`,
+  `height_m -> three Y`. Get it wrong and the building looks right while the
+  wind hits the wrong face.
+- **Colour has one home.** `BAND_HEX` in `lib/palette.ts` is the source of
+  truth — three.js cannot parse the `oklch()` the Tailwind theme would prefer,
+  so the `@theme` block in `index.css` mirrors those hex values and says so.
+  Three discrete bands, not a ramp, so a shaded 3D box and a table cell mean
+  the same thing.
+- **The viewport invents nothing.** Every colour and every arrow length reads
+  a field off `AnalysisResult`. Wind arrows are normalised against the largest
+  storey force, so they show the *shape* of the load; magnitude is the panel's
+  job.
+- **No runtime asset fetches in the scene.** No drei `<Environment>` and no
+  drei `<Text>` — both pull from a CDN, which would make the viewport depend
+  on the network during a demo. Lighting is local, labels are HTML.
+- **Carbon and cost are shown as totals and per m2.** Totals alone cannot
+  compare a six-storey design with a twelve-storey one. `grossFloorArea_m2()`
+  is in the engine so the denominator is traceable too.
+
+---
 
 **ScoreCard is deliberately not a 0-100 score.** Collapsing safety, carbon and
 cost into one number hides the tradeoff that is the entire point. Three raw
@@ -166,9 +213,14 @@ The engine is the part that must not rot, so it is the part with tests.
 
 1. **Engine + scaffold** (done) — types, wind, stability, drift,
    sustainability, materials, tests.
-2. 3D viewport — react-three-fiber, storeys coloured by `StoreyResult.utilization`.
-3. Zustand store — structure editing, with `analyze()` derived, never stored.
+2. **3D viewport** (done) — react-three-fiber, storeys coloured by
+   `StoreyResult.utilization`, wind arrows from `lateralForce_kN`.
+3. **Zustand store** (done) — structure editing, with `analyze()` derived,
+   never stored.
 4. AI critique panel — takes an `AnalysisResult` as context, returns prose.
 5. Supabase — auth and saved designs.
 
-Not built yet, by design: 3D, AI, Supabase.
+Not built yet, by design: AI, Supabase.
+
+Known and accepted: the production bundle is ~1.1 MB (three.js). Code-split it
+only if load time actually becomes a problem.

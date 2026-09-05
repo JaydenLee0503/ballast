@@ -13,12 +13,32 @@
  * A real whole-building figure would be substantially higher.
  */
 
-import type { MaterialEntry, Storey } from './types.ts'
+import type { MaterialEntry, Storey, Structure } from './types.ts'
 import { GRAVITY_M_S2, STRUCTURAL_FRACTION } from './constants.ts'
 
 /** Enclosed volume of a storey, before any structural fraction is applied. */
 export function grossVolume_m3(storey: Storey): number {
   return storey.height_m * storey.widthX_m * storey.widthY_m
+}
+
+/**
+ * Gross internal floor area, summed over the storey stack.
+ *
+ * Not a physical result — it is plan geometry — but it lives here because it
+ * is the denominator for carbon and cost *intensity* (kgCO2e/m2, $/m2), and
+ * intensity is how the profession benchmarks. Totals alone cannot compare a
+ * six-storey design with a twelve-storey one, which is exactly the comparison
+ * the student is being asked to make. Keeping it in the engine means every
+ * number on screen still traces back to this module.
+ *
+ * Counts the full plan rectangle of every storey, with no deduction for
+ * cores, stairs or the walls themselves.
+ */
+export function grossFloorArea_m2(structure: Structure): number {
+  return structure.storeys.reduce(
+    (total, storey) => total + storey.widthX_m * storey.widthY_m,
+    0,
+  )
 }
 
 /**

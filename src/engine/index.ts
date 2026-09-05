@@ -29,6 +29,7 @@ export {
 export { planArea_m2, storeyStiffness_kN_per_m, storeyDrift } from './drift.ts'
 export {
   grossVolume_m3,
+  grossFloorArea_m2,
   structuralVolume_m3,
   storeyQuantities,
 } from './sustainability.ts'

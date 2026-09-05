@@ -1,10 +1,15 @@
 @import "tailwindcss";
 
 /* Resilience Studio surfaces are dark by default: the 3D viewport is the
-   focus and a light chrome washes it out. Tokens live here so the engine's
-   utilization colours (see engine/scoring.ts) have one home. */
+   focus and a light chrome washes it out.
+
+   The three utilisation colours must match BAND_HEX in src/lib/palette.ts,
+   which is the source of truth — three.js cannot parse oklch(), so the
+   viewport reads hex from TypeScript while the HTML reads these tokens. If
+   you change one, change the other. */
 @theme {
-  --color-safe: oklch(0.72 0.15 155);
-  --color-caution: oklch(0.78 0.16 85);
-  --color-fail: oklch(0.63 0.21 25);
+  --color-safe: #22c55e;
+  --color-caution: #f59e0b;
+  --color-fail: #ef4444;
+  --color-wind: #60a5fa;
 }
