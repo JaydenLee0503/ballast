@@ -44,7 +44,8 @@ import {
   type Structure,
 } from '@/engine'
 import { BAND_HEX, utilizationBand } from '@/lib/palette.ts'
-import { materialLook } from '@/lib/materialLook.ts'
+import { materialLook, wallColor } from '@/lib/materialLook.ts'
+import { roofForm } from '@/lib/typology.ts'
 import { createWindowedMaterial } from './windows.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
@@ -103,7 +104,6 @@ function StoreyBox({
   useEffect(() => () => windowed.dispose(), [windowed])
 
   const band = utilizationBand(result.utilization)
-  const colour = BAND_HEX[band]
   // A `get` rather than the engine's throwing `getMaterial`: by the time a
   // storey reaches the viewport `analyze` has already rejected an unknown
   // material, so this cannot normally miss — and if it somehow does, an
@@ -111,6 +111,10 @@ function StoreyBox({
   // uSurface of -1 draws no set-out at all, so nothing is invented here.
   const entry = MATERIAL_LIBRARY.get(storey.materialId)
   const look = entry ? materialLook(entry.structuralClass) : null
+  // The band still decides which of three colours the storey is near; the
+  // material only says which shade of it. An unknown material falls back to
+  // the untinted band, which is the honest failure: no material claim at all.
+  const colour = look ? wallColor(BAND_HEX[band], look.tint) : BAND_HEX[band]
   const boxHeight = Math.max(0.1, storey.height_m - STOREY_GAP_M)
   const windowToWallRatio = FACADE[storey.facade].windowToWallRatio
 
@@ -245,5 +249,124 @@ export function FoundationBlock({ structure }: { structure: Structure }) {
       <meshStandardMaterial color="#44403c" roughness={0.95} />
       <Edges color="#1c1917" />
     </mesh>
+  )
+}
+
+/**
+ * Neutral, like the foundation block above. Not a palette colour, on purpose.
+ */
+const ROOF_HEX = '#4b4a52'
+/** Rise of a hip roof as a fraction of the shorter plan dimension. */
+const PITCH_RATIO = 0.3
+/** However wide the building, a domestic roof does not become a spire. */
+const PITCH_MAX_M = 4.5
+/** Fall across the plan of a shed roof, as a fraction. About 5 degrees. */
+const MONOPITCH_FALL = 0.09
+const PARAPET_HEIGHT_M = 1.05
+const PARAPET_THICKNESS_M = 0.35
+/** Slab thickness for the shed roof, and the parapet's own cap. */
+const ROOF_SLAB_M = 0.3
+
+/**
+ * The roof, drawn from the design's declared typology.
+ *
+ * NEUTRAL BY RULE. The engine has no roof: it charges no carbon for one, gives
+ * it no self-weight and puts no wind on it. So a roof must not wear a
+ * utilisation colour, because in this scene a band colour is a claim about
+ * safety and a roof has nothing to claim. Grey is how the viewport already
+ * says "drawn, not analysed" — it is what `FoundationBlock` does, for exactly
+ * the same reason.
+ *
+ * KNOWN GAP, stated rather than buried: a real roof is real carbon and real
+ * cost, and this one is neither. Closing that means a roof term in
+ * `sustainability.ts` with a cited factor and its own tests — not a number
+ * invented in a component. Until then the shape is honest about being only a
+ * shape.
+ */
+export function RoofCap({ structure }: { structure: Structure }) {
+  const form = roofForm(structure.typology)
+  const top = structure.storeys[structure.storeys.length - 1]
+  if (form === 'flat' || top === undefined) return null
+
+  const height_m = structure.storeys.reduce(
+    (total, storey) => total + storey.height_m,
+    0,
+  )
+  const { widthX_m, widthY_m } = top
+
+  if (form === 'pitched') {
+    const rise = Math.min(PITCH_MAX_M, PITCH_RATIO * Math.min(widthX_m, widthY_m))
+    return (
+      <mesh
+        castShadow
+        receiveShadow
+        position={[0, height_m + rise / 2, 0]}
+        rotation={[0, Math.PI / 4, 0]}
+        scale={[widthX_m, rise, widthY_m]}
+      >
+        {/* A four-sided cone of radius sqrt(1/2), turned 45 degrees, has its
+            corners at (+/-0.5, +/-0.5) — a unit square. Scaling it by the
+            plan then fits the roof to the walls exactly, at any proportion. */}
+        <coneGeometry args={[Math.SQRT1_2, 1, 4]} />
+        <meshStandardMaterial color={ROOF_HEX} roughness={0.9} flatShading />
+        <Edges color="#2f2748" />
+      </mesh>
+    )
+  }
+
+  if (form === 'monopitch') {
+    const fall = MONOPITCH_FALL * widthX_m
+    return (
+      <mesh
+        castShadow
+        receiveShadow
+        position={[0, height_m + fall / 2 + ROOF_SLAB_M / 2, 0]}
+        rotation={[0, 0, Math.atan2(fall, widthX_m)]}
+      >
+        {/* Long enough to still cover the plan once tilted. */}
+        <boxGeometry
+          args={[Math.hypot(widthX_m, fall), ROOF_SLAB_M, widthY_m]}
+        />
+        <meshStandardMaterial color={ROOF_HEX} roughness={0.9} />
+        <Edges color="#2f2748" />
+      </mesh>
+    )
+  }
+
+  // Parapet: four upstands round the edge, so the top reads as a flat roof
+  // with a lip rather than as a storey that stopped early.
+  const halfX = widthX_m / 2 - PARAPET_THICKNESS_M / 2
+  const halfY = widthY_m / 2 - PARAPET_THICKNESS_M / 2
+  const walls: Array<{
+    position: [number, number, number]
+    size: [number, number, number]
+  }> = [
+    {
+      position: [0, height_m + PARAPET_HEIGHT_M / 2, -halfY],
+      size: [widthX_m, PARAPET_HEIGHT_M, PARAPET_THICKNESS_M],
+    },
+    {
+      position: [0, height_m + PARAPET_HEIGHT_M / 2, halfY],
+      size: [widthX_m, PARAPET_HEIGHT_M, PARAPET_THICKNESS_M],
+    },
+    {
+      position: [-halfX, height_m + PARAPET_HEIGHT_M / 2, 0],
+      size: [PARAPET_THICKNESS_M, PARAPET_HEIGHT_M, widthY_m],
+    },
+    {
+      position: [halfX, height_m + PARAPET_HEIGHT_M / 2, 0],
+      size: [PARAPET_THICKNESS_M, PARAPET_HEIGHT_M, widthY_m],
+    },
+  ]
+
+  return (
+    <group>
+      {walls.map((wall, index) => (
+        <mesh key={index} castShadow receiveShadow position={wall.position}>
+          <boxGeometry args={wall.size} />
+          <meshStandardMaterial color={ROOF_HEX} roughness={0.9} />
+        </mesh>
+      ))}
+    </group>
   )
 }

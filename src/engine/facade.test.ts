@@ -32,6 +32,7 @@ const storey = (facade: FacadeSystem): Storey => ({
 const tower = (facade: FacadeSystem, storeys = 6): Structure => ({
   storeys: Array.from({ length: storeys }, () => storey(facade)),
   foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 400 },
+  typology: 'custom',
   exposureCategory: 'C',
 })
 

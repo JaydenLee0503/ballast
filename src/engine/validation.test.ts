@@ -18,6 +18,7 @@ const storey = (overrides: Partial<Storey> = {}): Storey => ({
 const structure = (overrides: Partial<Structure> = {}): Structure => ({
   storeys: [storey()],
   foundation: { type: 'raft', embedmentDepth_m: 1, anchorCapacity_kN: 100 },
+  typology: 'custom',
   exposureCategory: 'C',
   ...overrides,
 })

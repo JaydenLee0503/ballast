@@ -34,6 +34,7 @@ import {
   type LateralSystem,
 } from '@/engine'
 import { FACADE_BLURB, FACADE_LABEL } from '@/lib/facade.ts'
+import { ARCHETYPES } from '@/lib/typology.ts'
 import {
   ANCHOR_CAPACITY_LIMITS_KN,
   GUST_SPEED_LIMITS_KMH,
@@ -151,6 +152,7 @@ export function BasicControls() {
   const setPlanDimensions = useDesignStore((state) => state.setPlanDimensions)
   const setTaper = useDesignStore((state) => state.setTaper)
   const setAllFacade = useDesignStore((state) => state.setAllFacade)
+  const setTypology = useDesignStore((state) => state.setTypology)
   const taper = useDesignStore((state) => state.taper)
   const reset = useDesignStore((state) => state.reset)
 
@@ -164,7 +166,31 @@ export function BasicControls() {
 
   return (
     <div className="space-y-4">
-      <Group title="Your tower" hint="How many floors, and how big each one is.">
+      <Group
+        title="Building type"
+        hint="A starting point. Every control below still works on it afterwards."
+      >
+        <div className="grid grid-cols-3 gap-1.5">
+          {ARCHETYPES.map((entry) => (
+            <button
+              key={entry.typology}
+              type="button"
+              title={entry.blurb}
+              onClick={() => setTypology(entry.typology)}
+              className={chipClass(structure.typology === entry.typology)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+        {structure.typology === 'custom' ? (
+          <p className="text-[11px] leading-snug text-ink/55">
+            Your own design. Picking a type replaces it with that starting point.
+          </p>
+        ) : null}
+      </Group>
+
+      <Group title="Your building" hint="How many floors, and how big each one is.">
         <Field label="Storeys" value={String(storeys.length)}>
           <span className="flex gap-1">
             <button

@@ -58,6 +58,34 @@ export type FacadeSystem =
   /** Unitised aluminium-framed glazing, floor to floor. Light and expensive. */
   | 'curtain-wall'
 
+/**
+ * What kind of building this is.
+ *
+ * A *stated* classification, in the same sense as `exposureCategory`: it is
+ * something the student declares, not something the geometry implies. The
+ * engine does not read it — every number still comes from `storeys`,
+ * `foundation` and the hazard — and it is carried on `Structure` because it is
+ * part of the design somebody saves and shares, and because it is the natural
+ * hook for occupancy loading if live loads are ever added.
+ *
+ * It must never become a shortcut for a number. If a stadium one day needs
+ * different physics, that is a new structural form with its own load path and
+ * its own tests, not a coefficient looked up from this field. A typology that
+ * silently changed a safety factor would be exactly the failure the whole
+ * "the engine computes" rule exists to prevent.
+ *
+ * `'custom'` is the honest absence: a design that was freely edited, or one
+ * loaded from before typologies existed. It claims nothing.
+ */
+export type Typology =
+  | 'custom'
+  | 'house'
+  | 'townhouse'
+  | 'apartment-block'
+  | 'office-tower'
+  | 'warehouse'
+  | 'school'
+
 export type FoundationType =
   | 'slab-on-grade'
   | 'strip-footing'
@@ -147,6 +175,11 @@ export interface Foundation {
 /** `storeys[0]` is the ground storey; the array reads bottom-to-top. */
 export interface Structure {
   storeys: Storey[]
+  /**
+   * Declared building kind. Not read by the engine — see `Typology`. It drives
+   * the archetype presets and the roof the viewport draws, and nothing else.
+   */
+  typology: Typology
   foundation: Foundation
   exposureCategory: ExposureCategory
 }

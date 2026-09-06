@@ -28,8 +28,10 @@ import type {
   LateralSystem,
   Storey,
   Structure,
+  Typology,
   WindHazard,
 } from '@/engine'
+import { archetype, structureFor } from '@/lib/typology.ts'
 
 /**
  * Starting point: a mid-rise CLT block. Chosen because it sits in the
@@ -38,6 +40,10 @@ import type {
  * does reveals the tradeoff rather than a wall of green.
  */
 export const DEFAULT_STRUCTURE: Structure = {
+  // 'custom' rather than 'apartment-block': this is its own shape, not the
+  // apartment archetype, and claiming otherwise would put a typology on a
+  // design nobody chose one for.
+  typology: 'custom',
   storeys: Array.from({ length: 6 }, () => ({
     height_m: 3.5,
     widthX_m: 18,
@@ -116,6 +122,17 @@ export interface DesignState {
 
   /** Regenerate every storey's plan from the ground storey and this taper. */
   setTaper: (taper: number) => void
+
+  /**
+   * Replace the design with an archetype's starting point.
+   *
+   * The typology it stamps then *stays* until another is chosen — editing the
+   * shape afterwards does not silently revert it to 'custom'. A typology is a
+   * declaration ("this is a house"), not a description of the current
+   * geometry, so adding a floor to a house leaves it a house. The visible
+   * consequence is that the roof form persists too.
+   */
+  setTypology: (typology: Typology) => void
 
   setStoreyMaterial: (index: number, materialId: string) => void
   setStoreySystem: (index: number, lateralSystem: LateralSystem) => void
@@ -329,6 +346,22 @@ export const useDesignStore = create<DesignState>()((set) => ({
         },
       },
     })),
+
+  setTypology: (typology) => {
+    const entry = archetype(typology)
+    // 'custom' has no archetype and generates nothing: it is what a design
+    // *becomes* by being edited, not something you can build from.
+    if (entry === undefined) {
+      set((state) => ({ structure: { ...state.structure, typology } }))
+      return
+    }
+    set({
+      structure: structureFor(entry),
+      selectedStoreyIndex: null,
+      // The preset writes prismatic storeys, so the shape control has to agree.
+      taper: 0,
+    })
+  },
 
   setStoreyMaterial: (index, materialId) =>
     set((state) => ({ structure: withStorey(state.structure, index, { materialId }) })),

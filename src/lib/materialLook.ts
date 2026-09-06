@@ -50,6 +50,12 @@ export interface MaterialLook {
   readonly metalness: number
   readonly surface: SurfacePattern
   /**
+   * The material's own colour. Mixed *into* the utilisation band rather than
+   * replacing it — see `wallColor` for why that distinction is the whole ball
+   * game.
+   */
+  readonly tint: string
+  /**
    * How hard the pattern is drawn, 0..1. Kept low across the board: this is a
    * joint line catching a shadow, not a painted stripe. Anything strong enough
    * to notice at a glance would start competing with the band colour, which is
@@ -65,17 +71,105 @@ export interface MaterialLook {
  * would be a material that quietly lies about itself.
  */
 export const MATERIAL_LOOK: Readonly<Record<StructuralClass, MaterialLook>> = {
-  concrete: { roughness: 0.88, metalness: 0.02, surface: 'panel', relief: 0.16 },
-  steel: { roughness: 0.32, metalness: 0.72, surface: 'mullion', relief: 0.2 },
-  aluminium: { roughness: 0.24, metalness: 0.85, surface: 'rib', relief: 0.16 },
-  timber: { roughness: 0.74, metalness: 0.0, surface: 'grain', relief: 0.12 },
-  bamboo: { roughness: 0.66, metalness: 0.0, surface: 'culm', relief: 0.14 },
-  masonry: { roughness: 0.94, metalness: 0.0, surface: 'course', relief: 0.18 },
-  earth: { roughness: 1.0, metalness: 0.0, surface: 'lift', relief: 0.2 },
+  concrete: {
+    roughness: 0.88, metalness: 0.02, surface: 'panel', relief: 0.16,
+    tint: '#b9b4ac',
+  },
+  steel: {
+    roughness: 0.32, metalness: 0.72, surface: 'mullion', relief: 0.2,
+    tint: '#93a1ad',
+  },
+  aluminium: {
+    roughness: 0.24, metalness: 0.85, surface: 'rib', relief: 0.16,
+    tint: '#c7ced4',
+  },
+  timber: {
+    roughness: 0.74, metalness: 0.0, surface: 'grain', relief: 0.12,
+    tint: '#c08b52',
+  },
+  bamboo: {
+    roughness: 0.66, metalness: 0.0, surface: 'culm', relief: 0.14,
+    tint: '#cdb06a',
+  },
+  masonry: {
+    roughness: 0.94, metalness: 0.0, surface: 'course', relief: 0.18,
+    tint: '#a5563d',
+  },
+  earth: {
+    roughness: 1.0, metalness: 0.0, surface: 'lift', relief: 0.2,
+    tint: '#a8815a',
+  },
 }
 
 export function materialLook(structuralClass: StructuralClass): MaterialLook {
   return MATERIAL_LOOK[structuralClass]
+}
+
+/**
+ * How far the wall is pulled towards the material's own colour, 0..1.
+ *
+ * This is the one number that trades the two readings against each other, so
+ * it is a named constant and not a literal buried in a component. At 0 the
+ * building is pure utilisation colour and materials differ only in finish; at
+ * 1 the utilisation band is gone entirely and the colour means nothing about
+ * safety.
+ *
+ * `materialLook.test.ts` asserts the invariant that bounds it: every tinted
+ * storey must stay closer to its *own* band than to either of the other two.
+ * Measured, that holds up to about 0.56 and fails by 0.58 — a tinted amber
+ * and a tinted red converge. 0.42 sits deliberately short of the cliff, with
+ * roughly 19 units of RGB margin left, because the failure at the edge is the
+ * worst kind: a storey that looks like a different safety state entirely.
+ *
+ * This is the knob to turn if the material colour reads too weakly or too
+ * strongly. The test will stop you before the readout breaks.
+ */
+export const MATERIAL_TINT_STRENGTH = 0.42
+
+function channels(hex: string): [number, number, number] {
+  const value = Number.parseInt(hex.replace('#', ''), 16)
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+}
+
+function toHex([r, g, b]: readonly [number, number, number]): string {
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)))
+  return `#${((clamp(r) << 16) | (clamp(g) << 8) | clamp(b)).toString(16).padStart(6, '0')}`
+}
+
+/**
+ * The colour a wall is actually painted: the utilisation band, carried part of
+ * the way towards the material's own colour.
+ *
+ * A mix rather than a replacement, and that is the entire design. Utilisation
+ * still sets which of three colours the storey is *near*, so a failing storey
+ * is still unmistakably the red one; the material then says which red — the
+ * cool grey-red of steel, the warm ochre-red of rammed earth. Both readings
+ * survive because neither gets the whole channel.
+ *
+ * Linear in sRGB, deliberately: this is a paint mix, and matching the eye
+ * matters less here than being obvious enough to reason about when somebody
+ * later asks why a particular wall came out the colour it did.
+ */
+export function wallColor(
+  bandHex: string,
+  tintHex: string,
+  strength: number = MATERIAL_TINT_STRENGTH,
+): string {
+  const band = channels(bandHex)
+  const tint = channels(tintHex)
+  const t = Math.max(0, Math.min(1, strength))
+  return toHex([
+    band[0] + (tint[0] - band[0]) * t,
+    band[1] + (tint[1] - band[1]) * t,
+    band[2] + (tint[2] - band[2]) * t,
+  ])
+}
+
+/** Straight-line distance in RGB. Only ever used to compare two mixes. */
+export function colorDistance(a: string, b: string): number {
+  const [ar, ag, ab] = channels(a)
+  const [br, bg, bb] = channels(b)
+  return Math.hypot(ar - br, ag - bg, ab - bb)
 }
 
 /**

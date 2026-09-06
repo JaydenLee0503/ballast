@@ -35,7 +35,7 @@ import type { AnalysisResult, Structure, WindHazard } from '@/engine'
 import { rotateAboutPivot } from '@/lib/orbit.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
 import { StoreyTooltip } from './StoreyTooltip.tsx'
-import { FoundationBlock, StoreyStack } from './scene/StoreyStack.tsx'
+import { FoundationBlock, RoofCap, StoreyStack } from './scene/StoreyStack.tsx'
 import { WindArrows } from './scene/WindArrows.tsx'
 import { useNightProgress } from './scene/useNightProgress.ts'
 import { World } from './scene/World.tsx'
@@ -318,6 +318,7 @@ function Scene({
         onHover={onHoverStorey}
         onHoverEnd={onHoverStoreyEnd}
       />
+      <RoofCap structure={structure} />
       <WindArrows
         storeys={result.storeys}
         hazard={hazard}

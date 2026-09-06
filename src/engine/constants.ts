@@ -13,6 +13,7 @@ import type {
   FoundationType,
   LateralSystem,
   StructuralClass,
+  Typology,
 } from './types.ts'
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,16 @@ export const FOUNDATION_TYPES = exhaustiveList<FoundationType>()([
   'strip-footing',
   'raft',
   'piled',
+])
+
+export const TYPOLOGIES = exhaustiveList<Typology>()([
+  'custom',
+  'house',
+  'townhouse',
+  'apartment-block',
+  'office-tower',
+  'warehouse',
+  'school',
 ])
 
 export const FACADE_SYSTEMS = exhaustiveList<FacadeSystem>()([

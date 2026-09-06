@@ -30,6 +30,7 @@ function structure(overrides: Partial<Structure> = {}, storeyCount = 6): Structu
       facade: 'exposed' as const,
     })),
     foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 600 },
+    typology: 'custom',
     exposureCategory: 'C',
     ...overrides,
   }

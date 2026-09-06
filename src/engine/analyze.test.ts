@@ -117,6 +117,7 @@ describe('hand-calculated single-storey case', () => {
       embedmentDepth_m: 0,
       anchorCapacity_kN: 0,
     },
+    typology: 'custom',
     exposureCategory: 'C',
   }
 
@@ -217,6 +218,7 @@ describe('monotonicity in gust speed', () => {
       facade: 'exposed' as const,
     })),
     foundation: { type: 'piled', embedmentDepth_m: 2, anchorCapacity_kN: 400 },
+    typology: 'custom',
     exposureCategory: 'B',
   }
 
@@ -293,6 +295,7 @@ describe('tall and light vs squat and heavy', () => {
       facade: 'exposed' as const,
     })),
     foundation,
+    typology: 'custom',
     exposureCategory: 'C',
   }
 
@@ -307,6 +310,7 @@ describe('tall and light vs squat and heavy', () => {
       facade: 'exposed' as const,
     })),
     foundation,
+    typology: 'custom',
     exposureCategory: 'C',
   }
 
@@ -382,6 +386,7 @@ describe('slenderness is what drives it, not height alone', () => {
           embedmentDepth_m: 0,
           anchorCapacity_kN: 0,
         },
+        typology: 'custom',
         exposureCategory: 'C',
       },
       hazard,

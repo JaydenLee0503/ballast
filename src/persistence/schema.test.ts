@@ -59,7 +59,7 @@ describe('round trip', () => {
 describe('version', () => {
   it('refuses a version it does not know, naming what it can read', () => {
     expect(() => parse(corrupt((d) => { d['schemaVersion'] = 99 })))
-      .toThrow(/unsupported schemaVersion 99.*1 and 2/s)
+      .toThrow(/unsupported schemaVersion 99.*1, 2 and 3/s)
   })
 
   it('refuses a missing version rather than assuming the current one', () => {
@@ -211,7 +211,7 @@ describe('shape', () => {
     })) as unknown as Record<string, unknown>
     expect(parsed['injected']).toBeUndefined()
     expect(Object.keys(parsed.structure as object)).toEqual([
-      'storeys', 'foundation', 'exposureCategory',
+      'typology', 'storeys', 'foundation', 'exposureCategory',
     ])
     expect(Object.keys((parsed.structure as any).storeys[0])).toEqual([
       'height_m', 'widthX_m', 'widthY_m', 'materialId', 'lateralSystem', 'facade',
@@ -235,5 +235,42 @@ describe('the property the module exists for', () => {
       const design = parse(corrupt(mutate))
       expect(() => analyze(design.structure, design.hazard, MATERIAL_LIBRARY)).not.toThrow()
     }
+  })
+})
+
+/**
+ * Version 2 had no `typology`. Opening such a design must not invent one:
+ * guessing "apartment block" from eight storeys would put a label on a
+ * student's work that they never chose, which is the same failure as
+ * substituting an unknown material.
+ */
+describe('migrating a version-2 design', () => {
+  const version2 = () =>
+    corrupt((d) => {
+      d['schemaVersion'] = 2
+      delete d['structure']['typology']
+    })
+
+  it('accepts it and stamps it as current', () => {
+    expect(parse(version2()).schemaVersion).toBe(DESIGN_SCHEMA_VERSION)
+  })
+
+  it('declares no building kind rather than guessing one', () => {
+    expect(parse(version2()).structure.typology).toBe('custom')
+  })
+
+  it('scores it exactly as version 2 did', () => {
+    const migrated = parse(version2())
+    const before = analyze(DEFAULT_STRUCTURE, DEFAULT_HAZARD, MATERIAL_LIBRARY)
+    const after = analyze(migrated.structure, migrated.hazard, MATERIAL_LIBRARY)
+    expect(after.scoreCard).toEqual(before.scoreCard)
+  })
+
+  it('still rejects a typology it does not recognise', () => {
+    const raw = corrupt((d) => {
+      d['schemaVersion'] = 2
+      d['structure']['typology'] = 'stadium'
+    })
+    expect(() => parse(raw)).toThrow(DesignParseError)
   })
 })

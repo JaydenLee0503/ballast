@@ -27,6 +27,7 @@ import {
   FACADE_SYSTEMS,
   FOUNDATION_TYPES,
   LATERAL_SYSTEMS,
+  TYPOLOGIES,
   type ExposureCategory,
   type FacadeSystem,
   type FoundationType,
@@ -34,6 +35,7 @@ import {
   type MaterialLibrary,
   type Storey,
   type Structure,
+  type Typology,
   type WindHazard,
 } from '@/engine'
 import {
@@ -50,15 +52,16 @@ import {
 /**
  * Bump when the shape changes incompatibly.
  *
- * Version 2 added `Storey.facade`. Version 1 designs are still readable, and
- * the migration is the whole reason this file can say "reject, don't repair"
- * with a straight face — see `migrateStoreyFacade` below for why the default
- * it picks is the only honest one.
+ * Version 2 added `Storey.facade`. Version 3 added `Structure.typology`.
+ * Earlier designs are still readable, and the migrations are the whole reason
+ * this file can say "reject, don't repair" with a straight face — see
+ * `migrateStoreyFacade` and `migrateTypology` below for why the defaults they
+ * pick are the only honest ones.
  */
-export const DESIGN_SCHEMA_VERSION = 2
+export const DESIGN_SCHEMA_VERSION = 3
 
 /** Versions this build can read. Anything else is refused by number. */
-const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2]
+const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3]
 
 /**
  * A version-1 storey has no `facade` field, because version 1 had no concept
@@ -74,6 +77,22 @@ const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2]
 function migrateStoreyFacade(version: number, raw: unknown): FacadeSystem {
   if (version < 2 && raw === undefined) return 'exposed'
   return requireMember<FacadeSystem>(raw, 'facade', FACADE_SYSTEMS)
+}
+
+/**
+ * A design saved before version 3 declared no building kind, so it migrates to
+ * `'custom'` — which claims nothing.
+ *
+ * The alternative, guessing an archetype from the geometry, would be an
+ * invention of exactly the kind `migrateStoreyFacade` refuses: an eight-storey
+ * block is not necessarily an "apartment block", and stamping one would put a
+ * label on a student's work that they never chose and cannot see is wrong.
+ * `'custom'` also draws the flat roof these designs have always had, so an old
+ * design reloads looking exactly as it was saved.
+ */
+function migrateTypology(version: number, raw: unknown): Typology {
+  if (version < 3 && raw === undefined) return 'custom'
+  return requireMember<Typology>(raw, 'structure.typology', TYPOLOGIES)
 }
 
 /** How long a design name may be. It is a label in a list, not a document. */
@@ -197,6 +216,7 @@ function parseStructure(
   }
   const foundation = requireObject(raw['foundation'], 'structure.foundation')
   return {
+    typology: migrateTypology(version, raw['typology']),
     storeys: storeys.map((storey, index) =>
       parseStorey(storey, index, library, version),
     ),
@@ -270,17 +290,23 @@ export function createSavedDesign(
   }
 }
 
+/** "1, 2 and 3" — a readable list once there are more than two versions. */
+function listVersions(versions: readonly number[]): string {
+  if (versions.length <= 1) return versions.join('')
+  return `${versions.slice(0, -1).join(', ')} and ${versions[versions.length - 1]}`
+}
+
 export function parseDesign(raw: unknown, library: MaterialLibrary): SavedDesign {
   const value = requireObject(raw, 'design')
   const version = value['schemaVersion']
   if (typeof version !== 'number' || !READABLE_SCHEMA_VERSIONS.includes(version)) {
     fail(
       `unsupported schemaVersion ${String(version)}; this build reads ` +
-        `${READABLE_SCHEMA_VERSIONS.join(' and ')}`,
+        `${listVersions(READABLE_SCHEMA_VERSIONS)}`,
     )
   }
   // Stamped as current, not as found: what comes out of here has been through
-  // every migration, so it *is* a version-2 design whatever it arrived as.
+  // every migration, so it *is* a current design whatever it arrived as.
   return {
     schemaVersion: DESIGN_SCHEMA_VERSION,
     name: parseName(value['name']),

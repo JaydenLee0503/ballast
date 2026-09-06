@@ -18,6 +18,7 @@ export const DEMO_STRUCTURE: Structure = {
     facade: 'exposed' as const,
   })),
   foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 600 },
+  typology: 'custom',
   exposureCategory: 'C',
 }
 
