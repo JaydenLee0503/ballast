@@ -57,14 +57,68 @@ describe('round trip', () => {
 })
 
 describe('version', () => {
-  it('refuses a version it does not know, naming both', () => {
-    expect(() => parse(corrupt((d) => { d['schemaVersion'] = 2 })))
-      .toThrow(/unsupported schemaVersion 2.*version 1/s)
+  it('refuses a version it does not know, naming what it can read', () => {
+    expect(() => parse(corrupt((d) => { d['schemaVersion'] = 99 })))
+      .toThrow(/unsupported schemaVersion 99.*1 and 2/s)
   })
 
   it('refuses a missing version rather than assuming the current one', () => {
     expect(() => parse(corrupt((d) => { delete d['schemaVersion'] })))
       .toThrow(DesignParseError)
+  })
+})
+
+/**
+ * Version 1 had no envelope, so a version-1 design's carbon, cost and weight
+ * were a bare frame. The migration has to preserve that exactly — the whole
+ * point of picking `exposed` over a plausible-looking default is that opening
+ * an old design must not silently change what it scores.
+ */
+describe('migrating a version-1 design', () => {
+  const version1 = () =>
+    corrupt((d) => {
+      d['schemaVersion'] = 1
+      for (const storey of d['structure'].storeys) delete storey['facade']
+    })
+
+  it('accepts it and stamps it as current', () => {
+    expect(parse(version1()).schemaVersion).toBe(DESIGN_SCHEMA_VERSION)
+  })
+
+  it('gives every storey the facade whose carbon, cost and weight are zero', () => {
+    for (const storey of parse(version1()).structure.storeys) {
+      expect(storey.facade).toBe('exposed')
+    }
+  })
+
+  it('scores it identically to how version 1 would have', () => {
+    const migrated = parse(version1())
+    const before = analyze(
+      {
+        ...DEFAULT_STRUCTURE,
+        storeys: DEFAULT_STRUCTURE.storeys.map((storey) => ({
+          ...storey,
+          facade: 'exposed' as const,
+        })),
+      },
+      DEFAULT_HAZARD,
+      MATERIAL_LIBRARY,
+    )
+    const after = analyze(migrated.structure, migrated.hazard, MATERIAL_LIBRARY)
+    expect(after.scoreCard).toEqual(before.scoreCard)
+  })
+
+  it('still rejects a version-1 storey carrying a facade it does not recognise', () => {
+    const raw = corrupt((d) => {
+      d['schemaVersion'] = 1
+      d['structure'].storeys[0].facade = 'thatched'
+    })
+    expect(() => parse(raw)).toThrow(DesignParseError)
+  })
+
+  it('refuses a version-2 storey with no facade at all', () => {
+    const raw = corrupt((d) => { delete d['structure'].storeys[1].facade })
+    expect(() => parse(raw)).toThrow(DesignParseError)
   })
 })
 
@@ -160,7 +214,7 @@ describe('shape', () => {
       'storeys', 'foundation', 'exposureCategory',
     ])
     expect(Object.keys((parsed.structure as any).storeys[0])).toEqual([
-      'height_m', 'widthX_m', 'widthY_m', 'materialId', 'lateralSystem',
+      'height_m', 'widthX_m', 'widthY_m', 'materialId', 'lateralSystem', 'facade',
     ])
   })
 })

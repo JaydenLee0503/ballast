@@ -9,6 +9,7 @@
 
 import type {
   ExposureCategory,
+  FacadeSystem,
   FoundationType,
   LateralSystem,
   StructuralClass,
@@ -57,6 +58,93 @@ export const FOUNDATION_TYPES = exhaustiveList<FoundationType>()([
   'raft',
   'piled',
 ])
+
+export const FACADE_SYSTEMS = exhaustiveList<FacadeSystem>()([
+  'exposed',
+  'punched',
+  'ribbon',
+  'curtain-wall',
+])
+
+// ---------------------------------------------------------------------------
+// Facade: envelope assemblies
+// ---------------------------------------------------------------------------
+
+/**
+ * What one square metre of external wall costs, weighs and emits.
+ *
+ * PROVENANCE, stated plainly because it is weaker than the ASCE coefficients
+ * above and must not be mistaken for them. These are *assembly-level*
+ * order-of-magnitude figures for four common curtain-wall / cladding
+ * archetypes, in the ranges published EPDs and cost benchmarks put them in:
+ *
+ *   - Unitised aluminium-framed glazing runs roughly 140-200 kgCO2e/m2 A1-A3,
+ *     dominated by the aluminium (about 8-13 kgCO2e per kg of extrusion at
+ *     typical recycled content, over roughly 15 kg/m2 of frame) with the
+ *     insulating glass unit adding 25-40. It weighs 50-75 kg/m2.
+ *   - A precast or masonry spandrel wall with punched windows is heavier by
+ *     an order of magnitude (a 150 mm precast panel alone is about 360 kg/m2)
+ *     and lower in carbon per m2, because concrete is far less carbon-intense
+ *     per kilogram than aluminium even though there is much more of it.
+ *   - Ribbon glazing is taken as the midpoint of the two, because it is
+ *     literally half of each.
+ *
+ * They are NOT quantity-surveyed, NOT regional, and NOT from a named EPD.
+ * `analyze()` raises a warning whenever a design uses any of them, in the same
+ * spirit as the cost warning: good enough to teach the tradeoff, not good
+ * enough to quote. Treat a 10% difference between two facades as noise and a
+ * 3x difference as real.
+ *
+ * `windowToWallRatio` is dimensionless, 0 = blank wall, 1 = all glass. It is
+ * the one field here that is not an estimate — it is the definition of each
+ * archetype, and it is what the viewport draws.
+ */
+export interface FacadeProperties {
+  /** Dimensionless, 0..1: glazed fraction of the external wall. */
+  readonly windowToWallRatio: number
+  /** A1-A3, per m2 of external wall. */
+  readonly embodiedCarbon_kgCO2e_m2: number
+  /** Indicative supply-and-install rate, per m2 of external wall. */
+  readonly cost_usd_m2: number
+  /**
+   * Dead load per m2 of external wall. This is what makes the facade a
+   * structural question: it is the only way the envelope reaches the
+   * stability check, and it pushes overturning and sliding the *helpful* way.
+   */
+  readonly selfWeight_kN_m2: number
+}
+
+export const FACADE: Readonly<Record<FacadeSystem, FacadeProperties>> = {
+  // The zero case. Not a building anyone can occupy; it is here so a student
+  // can switch the envelope off and read what it was contributing.
+  exposed: {
+    windowToWallRatio: 0,
+    embodiedCarbon_kgCO2e_m2: 0,
+    cost_usd_m2: 0,
+    selfWeight_kN_m2: 0,
+  },
+  // Precast/masonry spandrel with punched aluminium windows.
+  punched: {
+    windowToWallRatio: 0.3,
+    embodiedCarbon_kgCO2e_m2: 95,
+    cost_usd_m2: 450,
+    selfWeight_kN_m2: 3.6,
+  },
+  // Horizontal strip glazing: about half glass, half opaque spandrel.
+  ribbon: {
+    windowToWallRatio: 0.55,
+    embodiedCarbon_kgCO2e_m2: 130,
+    cost_usd_m2: 650,
+    selfWeight_kN_m2: 1.9,
+  },
+  // Unitised aluminium-framed IGU, floor to floor.
+  'curtain-wall': {
+    windowToWallRatio: 0.85,
+    embodiedCarbon_kgCO2e_m2: 175,
+    cost_usd_m2: 950,
+    selfWeight_kN_m2: 0.6,
+  },
+}
 
 // ---------------------------------------------------------------------------
 // Wind: ASCE 7-16 coefficients

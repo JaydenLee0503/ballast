@@ -11,11 +11,9 @@
  * working during the demo if the network does not.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MATERIAL_LIBRARY, type Structure, type WindHazard } from '@/engine'
+import { useCallback, useEffect, useState } from 'react'
+import type { Structure, WindHazard } from '@/engine'
 import {
-  browserStorage,
-  createLocalDesignLibrary,
   createSavedDesign,
   newDesignId,
   type SavedDesign,
@@ -24,6 +22,7 @@ import {
   type DesignRecord,
 } from '@/persistence'
 import { useDesignStore } from '@/store/design.ts'
+import { useDesignLibrary } from '@/store/useDesignLibrary.ts'
 
 export interface SavedDesignsProps {
   structure: Structure
@@ -44,17 +43,9 @@ export function SavedDesigns({ structure, hazard }: SavedDesignsProps) {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  // One storage handle for the life of the component; `browserStorage()`
-  // returns null where site data is blocked, which is a state to report rather
-  // than a crash to hit on the first save.
-  const storage = useMemo(() => browserStorage(), [])
-  const library = useMemo(
-    () =>
-      storage === null
-        ? null
-        : createLocalDesignLibrary({ storage, materials: MATERIAL_LIBRARY }),
-    [storage],
-  )
+  // Account, browser, or nowhere -- decided in one place, and this component
+  // deliberately cannot tell which it got.
+  const { library, backend, notice: backendNotice } = useDesignLibrary()
 
   const refresh = useCallback(() => {
     if (library === null) return
@@ -120,9 +111,17 @@ export function SavedDesigns({ structure, hazard }: SavedDesignsProps) {
     [library, refresh],
   )
 
+  if (backend === 'connecting') {
+    return (
+      <p className="text-[0.7rem] leading-relaxed text-neutral-500">
+        Connecting to your saved designs…
+      </p>
+    )
+  }
+
   if (library === null) {
     return (
-      <p className="rounded border border-caution/40 px-2 py-1.5 text-[0.7rem] leading-relaxed text-caution">
+      <p className="slab border-caution-ink/30 bg-caution/10 px-2.5 py-2 text-[0.7rem] leading-relaxed text-caution-ink">
         This browser is not allowing site storage, so designs cannot be saved
         here. Share links still work — they carry the design inside the URL.
       </p>
@@ -141,13 +140,13 @@ export function SavedDesigns({ structure, hazard }: SavedDesignsProps) {
           onKeyDown={(event) => {
             if (event.key === 'Enter') save()
           }}
-          className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-600"
+          className="min-w-0 flex-1 rounded-lg border-2 border-ink/15 bg-white px-2.5 py-1.5 text-xs text-ink placeholder:text-ink/35 focus:border-ink focus:outline-none"
         />
         <button
           type="button"
           onClick={save}
           disabled={name.trim().length === 0}
-          className="rounded border border-wind/60 bg-wind/10 px-3 py-1.5 text-xs text-neutral-100 hover:bg-wind/20 disabled:opacity-40"
+          className="rounded-full border-2 border-ink bg-mint px-4 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-45"
         >
           Save
         </button>
@@ -156,61 +155,68 @@ export function SavedDesigns({ structure, hazard }: SavedDesignsProps) {
       <button
         type="button"
         onClick={copyCurrentLink}
-        className="w-full rounded border border-neutral-800 py-1.5 text-[0.7rem] text-neutral-400 hover:bg-neutral-900"
+        className="w-full rounded-full border-2 border-ink/15 bg-white py-1.5 font-display text-[0.7rem] text-ink/65 hover:border-ink hover:text-ink"
       >
         Copy a link to the design on screen
       </button>
 
       {error !== null && (
-        <p className="rounded border border-fail/50 px-2 py-1.5 text-[0.7rem] leading-relaxed text-neutral-300">
-          <span className="font-medium text-fail">Could not save. </span>
+        <p className="slab border-fail-ink/30 bg-fail/10 px-2.5 py-2 text-[0.7rem] leading-relaxed text-ink/75">
+          <span className="font-display text-fail-ink">Could not save. </span>
           {error}
         </p>
       )}
 
+      {backendNotice !== null && (
+        <p className="slab border-caution-ink/30 bg-caution/10 px-2.5 py-2 text-[0.7rem] leading-relaxed text-ink/75">
+          {backendNotice}
+        </p>
+      )}
+
       {notice !== null && (
-        <p className="break-all rounded border border-neutral-800 px-2 py-1.5 text-[0.7rem] leading-relaxed text-neutral-400">
+        <p className="slab break-all px-2.5 py-2 text-[0.7rem] leading-relaxed text-ink/70">
           {notice}
         </p>
       )}
 
       {records.length === 0 ? (
-        <p className="text-[0.7rem] leading-relaxed text-neutral-500">
-          Nothing saved yet. Designs are kept in this browser; a share link
-          carries one to anybody, no account needed.
+        <p className="text-[0.7rem] leading-relaxed text-ink/55">
+          {backend === 'cloud'
+            ? 'Nothing saved yet. Designs are kept against this browser\u2019s anonymous account, so they survive a reload. A share link carries one to anybody.'
+            : 'Nothing saved yet. Designs are kept in this browser; a share link carries one to anybody, no account needed.'}
         </p>
       ) : (
         <ul className="space-y-1.5">
           {records.map((record) => (
             <li
               key={record.id}
-              className="rounded border border-neutral-800 bg-neutral-900/40 p-2"
+              className="slab p-2.5"
             >
-              <p className="truncate text-xs font-medium text-neutral-200">
+              <p className="truncate font-display text-sm text-ink">
                 {record.design.name}
               </p>
-              <p className="mt-0.5 text-[0.65rem] text-neutral-600">
+              <p className="mt-0.5 text-[0.65rem] text-ink/50">
                 {describe(record)}
               </p>
               <div className="mt-1.5 flex gap-1">
                 <button
                   type="button"
                   onClick={() => loadDesign(record.design)}
-                  className="rounded border border-neutral-700 px-2 py-1 text-[0.65rem] text-neutral-300 hover:bg-neutral-800"
+                  className="rounded-full border-2 border-ink/20 bg-white px-2.5 py-1 font-display text-[0.65rem] text-ink hover:border-ink"
                 >
                   Open
                 </button>
                 <button
                   type="button"
                   onClick={() => copyLink(record.design)}
-                  className="rounded border border-neutral-700 px-2 py-1 text-[0.65rem] text-neutral-300 hover:bg-neutral-800"
+                  className="rounded-full border-2 border-ink/20 bg-white px-2.5 py-1 font-display text-[0.65rem] text-ink hover:border-ink"
                 >
                   Copy link
                 </button>
                 <button
                   type="button"
                   onClick={() => remove(record)}
-                  className="ml-auto rounded px-2 py-1 text-[0.65rem] text-neutral-600 hover:text-fail"
+                  className="ml-auto rounded-full px-2 py-1 font-display text-[0.65rem] text-ink/45 hover:text-fail-ink"
                 >
                   Delete
                 </button>

@@ -18,10 +18,22 @@ import {
   type AnalysisResult,
   type ExposureCategory,
   type MaterialLibrary,
+  FACADE_SYSTEMS,
+  type FacadeSystem,
   type Structure,
   type WindHazard,
 } from '@/engine'
+import { FACADE_LABEL } from '@/lib/facade.ts'
 import type { CritiqueContext, CritiqueStorey } from './types.ts'
+
+/**
+ * The same words the student is looking at. Sharing the label table with the
+ * controls is the point: a suggestion that says "switch to punched windows"
+ * should name the button, not an internal identifier.
+ */
+function facadeName(facade: FacadeSystem | undefined): string {
+  return facade === undefined ? 'unknown' : FACADE_LABEL[facade]
+}
 
 const EXPOSURE_DESCRIPTION: Readonly<Record<ExposureCategory, string>> = {
   B: 'urban or suburban, numerous closely spaced obstructions',
@@ -70,6 +82,7 @@ export function buildCritiqueContext(
       label: storey.index + 1,
       materialName: material?.name ?? 'unknown',
       lateralSystem: structure.storeys[storey.index]?.lateralSystem ?? 'unknown',
+      facadeName: facadeName(structure.storeys[storey.index]?.facade),
       lateralForce_kN: round(storey.lateralForce_kN, 1),
       storeyShear_kN: round(storey.storeyShear_kN, 1),
       driftDenominator: driftDenominator(storey.driftRatio),
@@ -124,6 +137,7 @@ export function buildCritiqueContext(
       driftLimitDenominator: driftDenominator(DRIFT_LIMIT_RATIO),
     },
     storeys,
+    facadeNames: FACADE_SYSTEMS.map(facadeName),
     materials: [...library.values()].map((material) => ({
       id: material.id,
       name: material.name,

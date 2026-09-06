@@ -97,6 +97,7 @@ export function renderFacts(context: CritiqueContext): string {
   for (const storey of context.storeys) {
     lines.push(
       `- Storey ${storey.label}: ${storey.materialName}, ${storey.lateralSystem}` +
+        `, ${storey.facadeName}` +
         `, wind force ${fixed(storey.lateralForce_kN, 1)} kN` +
         `, shear ${fixed(storey.storeyShear_kN, 1)} kN` +
         `, drift ${driftText(storey.driftDenominator)}` +
@@ -115,6 +116,14 @@ export function renderFacts(context: CritiqueContext): string {
         `density ${fixed(material.density_kg_m3, 0)} kg/m3`,
     )
   }
+
+  lines.push(
+    '',
+    'ENVELOPES AVAILABLE (the only ones you may recommend): ' +
+      context.facadeNames.join(', ') +
+      '. Their carbon, cost and weight are already inside the figures above; ' +
+      'you have not been given per-square-metre rates and must not quote any.',
+  )
 
   if (context.warnings.length > 0) {
     lines.push('', 'MODELLING CAVEATS THE ENGINE REPORTED')

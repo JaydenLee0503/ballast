@@ -28,6 +28,36 @@ export type LateralSystem =
   | 'shear-wall'
   | 'none'
 
+/**
+ * The envelope hung on the frame — what a student sees as "windows".
+ *
+ * A real building is a structure plus a skin, and the skin is a large part of
+ * both its carbon and its cost. It is also the choice that most changes what a
+ * building *looks like*, which is why it belongs in the model rather than in
+ * the renderer: a glass tower and a precast one should not differ only in
+ * pixels.
+ *
+ * Each system carries a window-to-wall ratio, a carbon and cost intensity per
+ * square metre of external wall, and a weight. See `FACADE` in constants.ts
+ * for the values and where they come from.
+ *
+ * DELIBERATELY NOT STRUCTURAL. The facade hangs off the frame; the lateral
+ * system in this model is a core or a braced/moment frame, not the perimeter
+ * wall, so punching windows in it does not change stiffness or drift. It does
+ * change *weight*, and weight is what resists overturning and sliding — so a
+ * fully glazed tower is a lighter tower and a more tippable one. That is the
+ * real consequence, and it is the one the engine models.
+ */
+export type FacadeSystem =
+  /** No envelope at all. The zero case: what does a skin actually cost? */
+  | 'exposed'
+  /** Opaque spandrel wall with punched windows. Heavy, cheap, low glass. */
+  | 'punched'
+  /** Horizontal strip glazing between opaque bands. */
+  | 'ribbon'
+  /** Unitised aluminium-framed glazing, floor to floor. Light and expensive. */
+  | 'curtain-wall'
+
 export type FoundationType =
   | 'slab-on-grade'
   | 'strip-footing'
@@ -98,6 +128,13 @@ export interface Storey {
   widthY_m: number
   materialId: string
   lateralSystem: LateralSystem
+  /**
+   * Required, with no default anywhere in the engine. A storey with no stated
+   * envelope would otherwise silently score as one with no envelope at all,
+   * and "we forgot to ask" and "there is deliberately no cladding" must not
+   * produce the same carbon number by accident.
+   */
+  facade: FacadeSystem
 }
 
 export interface Foundation {
@@ -163,9 +200,21 @@ export interface StoreyResult {
   /** Cumulative shear carried by this storey (sum of forces above + own). */
   storeyShear_kN: number
   materialVolume_m3: number
+  /** Frame + facade. The facade share is broken out below. */
   selfWeight_kN: number
+  /** Frame + facade, A1-A3. The facade share is broken out below. */
   embodiedCarbon_kgCO2e: number
+  /** Frame + facade. The facade share is broken out below. */
   cost_usd: number
+  /** External wall area of this storey: perimeter x height. No roof. */
+  facadeArea_m2: number
+  /**
+   * The facade's share of the three totals above, so the split is auditable
+   * on screen rather than inferable. Frame-only is total minus these.
+   */
+  facadeCarbon_kgCO2e: number
+  facadeCost_usd: number
+  facadeWeight_kN: number
   stiffness_kN_per_m: number
   drift_m: number
   /** drift_m / height_m, dimensionless. */

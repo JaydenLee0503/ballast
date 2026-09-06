@@ -24,9 +24,11 @@
 
 import {
   EXPOSURE_CATEGORIES,
+  FACADE_SYSTEMS,
   FOUNDATION_TYPES,
   LATERAL_SYSTEMS,
   type ExposureCategory,
+  type FacadeSystem,
   type FoundationType,
   type LateralSystem,
   type MaterialLibrary,
@@ -46,13 +48,33 @@ import {
 } from '@/lib/limits.ts'
 
 /**
- * Bump when the shape changes incompatibly. There is deliberately no migration
- * path yet: with one version in existence, a migration would be untested code
- * guessing at a format that has never existed. `parseDesign` refuses anything
- * it does not recognise and says which version it found, which is enough to
- * write the migration correctly when there is finally something to migrate.
+ * Bump when the shape changes incompatibly.
+ *
+ * Version 2 added `Storey.facade`. Version 1 designs are still readable, and
+ * the migration is the whole reason this file can say "reject, don't repair"
+ * with a straight face — see `migrateStoreyFacade` below for why the default
+ * it picks is the only honest one.
  */
-export const DESIGN_SCHEMA_VERSION = 1
+export const DESIGN_SCHEMA_VERSION = 2
+
+/** Versions this build can read. Anything else is refused by number. */
+const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2]
+
+/**
+ * A version-1 storey has no `facade` field, because version 1 had no concept
+ * of an envelope: its carbon, cost and weight were a bare structural frame.
+ *
+ * So it migrates to `'exposed'`, which is the facade whose carbon, cost and
+ * weight are all zero — the design reads back with *exactly* the numbers it
+ * was saved with. Any other default would be an invention: picking, say,
+ * `'punched'` would hand a student a carbon figure for cladding they never
+ * chose, which is the same failure as substituting an unknown material, only
+ * quieter. Re-saving stamps version 2, and from then on the choice is theirs.
+ */
+function migrateStoreyFacade(version: number, raw: unknown): FacadeSystem {
+  if (version < 2 && raw === undefined) return 'exposed'
+  return requireMember<FacadeSystem>(raw, 'facade', FACADE_SYSTEMS)
+}
 
 /** How long a design name may be. It is a label in a list, not a document. */
 export const MAX_NAME_LENGTH = 80
@@ -122,6 +144,7 @@ function parseStorey(
   value: unknown,
   index: number,
   library: MaterialLibrary,
+  version: number,
 ): Storey {
   const raw = requireObject(value, `storeys[${index}]`)
   const materialId = raw['materialId']
@@ -154,10 +177,15 @@ function parseStorey(
       `storeys[${index}].lateralSystem`,
       LATERAL_SYSTEMS,
     ),
+    facade: migrateStoreyFacade(version, raw['facade']),
   }
 }
 
-function parseStructure(value: unknown, library: MaterialLibrary): Structure {
+function parseStructure(
+  value: unknown,
+  library: MaterialLibrary,
+  version: number,
+): Structure {
   const raw = requireObject(value, 'structure')
   const storeys = raw['storeys']
   if (!Array.isArray(storeys)) fail('structure.storeys must be an array')
@@ -169,7 +197,9 @@ function parseStructure(value: unknown, library: MaterialLibrary): Structure {
   }
   const foundation = requireObject(raw['foundation'], 'structure.foundation')
   return {
-    storeys: storeys.map((storey, index) => parseStorey(storey, index, library)),
+    storeys: storeys.map((storey, index) =>
+      parseStorey(storey, index, library, version),
+    ),
     foundation: {
       type: requireMember<FoundationType>(
         foundation['type'],
@@ -243,17 +273,19 @@ export function createSavedDesign(
 export function parseDesign(raw: unknown, library: MaterialLibrary): SavedDesign {
   const value = requireObject(raw, 'design')
   const version = value['schemaVersion']
-  if (version !== DESIGN_SCHEMA_VERSION) {
+  if (typeof version !== 'number' || !READABLE_SCHEMA_VERSIONS.includes(version)) {
     fail(
-      `unsupported schemaVersion ${String(version)}; this build reads version ` +
-        `${DESIGN_SCHEMA_VERSION}`,
+      `unsupported schemaVersion ${String(version)}; this build reads ` +
+        `${READABLE_SCHEMA_VERSIONS.join(' and ')}`,
     )
   }
+  // Stamped as current, not as found: what comes out of here has been through
+  // every migration, so it *is* a version-2 design whatever it arrived as.
   return {
     schemaVersion: DESIGN_SCHEMA_VERSION,
     name: parseName(value['name']),
     savedAt: parseSavedAt(value['savedAt']),
-    structure: parseStructure(value['structure'], library),
+    structure: parseStructure(value['structure'], library, version),
     hazard: parseHazard(value['hazard']),
   }
 }

@@ -18,7 +18,7 @@ import { MATERIAL_LIBRARY, type AnalysisResult, type Structure, type WindHazard 
 import { buildCritiqueContext } from '@/ai/context.ts'
 import { requestCritique } from '@/ai/client.ts'
 import type { Critique, UntraceableFigure } from '@/ai/types.ts'
-import { BAND_HEX } from '@/lib/palette.ts'
+import { BAND_INK_HEX } from '@/lib/palette.ts'
 
 type Status = 'idle' | 'loading' | 'done' | 'error'
 
@@ -78,7 +78,7 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
 
   return (
     <div className="space-y-3">
-      <p className="text-[0.7rem] leading-relaxed text-neutral-500">
+      <p className="text-[0.7rem] leading-relaxed text-ink/55">
         Every number on this page comes from the engine. This panel only
         explains them — and any figure it quotes that cannot be traced back is
         flagged below.
@@ -88,7 +88,7 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
         type="button"
         onClick={ask}
         disabled={status === 'loading'}
-        className="w-full rounded border border-wind/60 bg-wind/10 py-2 text-xs text-neutral-100 hover:bg-wind/20 disabled:opacity-40"
+        className="w-full rounded-full border-2 border-ink bg-coral py-2 font-display text-sm text-white shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-45"
       >
         {status === 'loading'
           ? 'Thinking…'
@@ -98,15 +98,17 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
       </button>
 
       {stale && status === 'done' && (
-        <p className="rounded border border-caution/40 px-2 py-1.5 text-[0.7rem] text-caution">
+        <p className="slab border-caution-ink/30 bg-caution/10 px-2.5 py-2 text-[0.7rem] leading-relaxed text-caution-ink">
           The design has changed since this critique. The numbers above are
           current; this text is not.
         </p>
       )}
 
       {status === 'error' && error !== null && (
-        <div className="rounded border border-fail/50 px-2 py-1.5 text-[0.7rem] leading-relaxed text-neutral-300">
-          <span className="font-medium text-fail">Could not get a critique. </span>
+        <div className="slab border-fail-ink/30 bg-fail/10 px-2.5 py-2 text-[0.7rem] leading-relaxed text-ink/75">
+          <span className="font-display text-fail-ink">
+            Could not get a critique.{' '}
+          </span>
           {error}
         </div>
       )}
@@ -115,10 +117,10 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
         <article className="space-y-3">
           {untraceable.length > 0 && (
             <div
-              className="rounded border px-2 py-1.5 text-[0.7rem] leading-relaxed"
-              style={{ borderColor: BAND_HEX.caution, color: BAND_HEX.caution }}
+              className="rounded-xl border-2 bg-caution/10 px-2.5 py-2 text-[0.7rem] leading-relaxed"
+              style={{ borderColor: BAND_INK_HEX.caution, color: BAND_INK_HEX.caution }}
             >
-              <span className="font-medium">Unverified figures. </span>
+              <span className="font-display">Unverified figures. </span>
               These do not match anything the engine produced, so treat them as
               the model talking, not as results:{' '}
               {untraceable.map((figure) => figure.text).join(', ')}.
@@ -126,20 +128,20 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
           )}
 
           {!parsedAsJson && (
-            <p className="text-[0.65rem] text-neutral-600">
+            <p className="text-[0.65rem] text-ink/45">
               The model did not follow the response format, so this is its raw
               reply.
             </p>
           )}
 
           {critique.verdict !== '' && (
-            <p className="text-sm leading-snug text-neutral-100">
+            <p className="font-display text-base leading-snug text-ink">
               {critique.verdict}
             </p>
           )}
 
           {critique.explanation !== '' && (
-            <p className="whitespace-pre-wrap text-xs leading-relaxed text-neutral-400">
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-ink/70">
               {critique.explanation}
             </p>
           )}
@@ -149,18 +151,18 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
               {critique.suggestions.map((suggestion, index) => (
                 <li
                   key={`${index}-${suggestion.change}`}
-                  className="rounded border border-neutral-800 bg-neutral-900/40 p-2.5"
+                  className="slab p-2.5"
                 >
-                  <p className="text-xs font-medium text-neutral-200">
+                  <p className="font-display text-xs text-ink">
                     {suggestion.change}
                   </p>
                   {suggestion.rationale !== '' && (
-                    <p className="mt-1 text-[0.7rem] leading-relaxed text-neutral-500">
+                    <p className="mt-1 text-[0.7rem] leading-relaxed text-ink/60">
                       {suggestion.rationale}
                     </p>
                   )}
                   {suggestion.tradeoff !== '' && (
-                    <p className="mt-1 text-[0.7rem] leading-relaxed text-caution/70">
+                    <p className="mt-1 text-[0.7rem] leading-relaxed text-caution-ink">
                       Tradeoff: {suggestion.tradeoff}
                     </p>
                   )}
@@ -169,7 +171,7 @@ export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps)
             </ol>
           )}
 
-          <p className="text-[0.65rem] text-neutral-600">
+          <p className="text-[0.65rem] leading-relaxed text-ink/45">
             Try a suggestion with the controls — the engine, not the model,
             decides whether it worked.
           </p>

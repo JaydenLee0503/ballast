@@ -36,7 +36,7 @@ import {
   formatSignedPercent,
   formatUsd,
 } from '@/lib/format.ts'
-import { BAND_HEX, utilizationBand } from '@/lib/palette.ts'
+import { BAND_HEX, BAND_INK_HEX, utilizationBand } from '@/lib/palette.ts'
 
 const FAILURE_MODE_LABEL: Readonly<Record<FailureMode, string>> = {
   overturning: 'Overturning',
@@ -58,17 +58,18 @@ const FAILURE_MODE_LABEL: Readonly<Record<FailureMode, string>> = {
 function Delta({ delta }: { delta: MetricDelta | undefined }) {
   if (delta === undefined) return null
 
+  // The ink variants, not the raw band hexes: this is small type on paper.
   const colour =
     delta.direction === 'better'
-      ? BAND_HEX.safe
+      ? BAND_INK_HEX.safe
       : delta.direction === 'worse'
-        ? BAND_HEX.fail
-        : undefined
+        ? BAND_INK_HEX.fail
+        : '#7b7490'
 
   return (
     <span
-      className="ml-1.5 align-middle text-[0.7rem] tabular-nums"
-      style={colour !== undefined ? { color: colour } : { color: '#78716c' }}
+      className="ml-1.5 align-middle text-[0.7rem] font-bold tabular-nums"
+      style={{ color: colour }}
     >
       {formatSignedPercent(delta.relativeChange)}
     </span>
@@ -95,22 +96,25 @@ function Dial({
   const fill = Math.max(0, Math.min(1, utilization))
 
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
-      <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">
+    <div className="sticker p-3">
+      <div className="font-pixel text-[0.7rem] uppercase tracking-widest text-ink/45">
         {label}
       </div>
-      <div className="mt-1 text-xl tabular-nums text-neutral-100">
+      <div className="mt-1 font-display text-xl tabular-nums text-ink">
         {value}
         <Delta delta={delta} />
       </div>
-      <div className="text-xs tabular-nums text-neutral-500">{sub}</div>
-      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-neutral-800">
+      <div className="text-xs tabular-nums text-ink/50">{sub}</div>
+      {/* The bar keeps the raw band hex, not the ink variant: it is a filled
+          shape rather than type, and it is the one thing on this panel that
+          has to read as the same colour as the storey it describes in 3D. */}
+      <div className="mt-2 h-2 w-full overflow-hidden rounded-full border-2 border-ink bg-paper">
         <div
-          className="h-full rounded-full transition-[width] duration-200"
+          className="h-full transition-[width] duration-200"
           style={{ width: `${fill * 100}%`, backgroundColor: BAND_HEX[band] }}
         />
       </div>
-      {note && <div className="mt-1.5 text-[0.65rem] text-neutral-600">{note}</div>}
+      {note && <div className="mt-1.5 text-[0.65rem] text-ink/45">{note}</div>}
     </div>
   )
 }
@@ -151,16 +155,17 @@ export function ScorePanel({
   return (
     <section className="space-y-3">
       <div
-        className="rounded-lg border px-3 py-2 text-sm"
+        className="rounded-2xl border-2 px-3 py-2"
         style={{
-          borderColor: failing ? BAND_HEX.fail : BAND_HEX.safe,
-          color: failing ? BAND_HEX.fail : BAND_HEX.safe,
+          borderColor: failing ? BAND_INK_HEX.fail : BAND_INK_HEX.safe,
+          backgroundColor: failing ? '#fdeceb' : '#e9f8ef',
+          color: failing ? BAND_INK_HEX.fail : BAND_INK_HEX.safe,
         }}
       >
-        <span className="text-[0.65rem] uppercase tracking-wider text-neutral-500">
-          Governing
+        <span className="font-pixel text-[0.7rem] tracking-widest opacity-70">
+          GOVERNING
         </span>
-        <div className="font-medium">
+        <div className="font-display text-base">
           {FAILURE_MODE_LABEL[scoreCard.governingFailureMode]}
         </div>
       </div>
@@ -206,18 +211,18 @@ export function ScorePanel({
       {/* What the percentages are measured against. Without this line a delta
           is an unattributed claim -- "+18%" is only meaningful once you know
           against what, and the answer changes when a design is opened. */}
-      <div className="flex items-center gap-2 text-[0.65rem] text-neutral-600">
+      <div className="flex items-center gap-2 text-[0.65rem] text-ink/55">
         {isBaseline ? (
           <span className="truncate">
             This is the baseline · {baselineLabel}
           </span>
         ) : (
           <span className="truncate">
-            vs <span className="text-neutral-400">{baselineLabel}</span>
+            vs <span className="font-bold text-ink">{baselineLabel}</span>
             {comparison !== null &&
               comparison.currentGoverningFailureMode !==
                 comparison.baselineGoverningFailureMode && (
-                <span className="text-caution">
+                <span className="text-caution-ink">
                   {' '}
                   · governing mode changed
                 </span>
@@ -228,30 +233,30 @@ export function ScorePanel({
           type="button"
           onClick={onPinBaseline}
           disabled={isBaseline}
-          className="ml-auto shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 hover:border-neutral-600 hover:text-neutral-300 disabled:opacity-40"
+          className="ml-auto shrink-0 rounded-full border-2 border-ink/15 bg-white px-2 py-0.5 hover:border-ink disabled:opacity-40 disabled:hover:border-ink/15"
         >
           Pin current
         </button>
         <button
           type="button"
           onClick={onResetBaseline}
-          className="shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 hover:border-neutral-600 hover:text-neutral-300"
+          className="shrink-0 rounded-full border-2 border-ink/15 bg-white px-2 py-0.5 hover:border-ink"
         >
           Reset
         </button>
       </div>
 
-      <dl className="grid grid-cols-3 gap-3 text-xs">
+      <dl className="slab grid grid-cols-3 gap-3 p-3 text-xs">
         {[
           ['Storeys', String(structure.storeys.length)],
           ['Floor area', `${Math.round(floorArea_m2).toLocaleString('en-US')} m²`],
           ['Overturning', formatSafetyFactor(stability.factorOfSafetyOverturning)],
         ].map(([label, value]) => (
           <div key={label}>
-            <dt className="text-[0.65rem] uppercase tracking-wider text-neutral-600">
+            <dt className="font-pixel text-[0.65rem] uppercase tracking-widest text-ink/45">
               {label}
             </dt>
-            <dd className="tabular-nums text-neutral-300">{value}</dd>
+            <dd className="mt-0.5 font-display tabular-nums text-ink">{value}</dd>
           </div>
         ))}
       </dl>

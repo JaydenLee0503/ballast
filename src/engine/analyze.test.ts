@@ -107,6 +107,9 @@ describe('hand-calculated single-storey case', () => {
         widthY_m: 10,
         materialId: 'reinforced-concrete',
         lateralSystem: 'shear-wall',
+        // No envelope: the thirteen steps in the header are a frame-only
+        // take-off, and they must stay arithmetically reachable by hand.
+        facade: 'exposed',
       },
     ],
     foundation: {
@@ -211,6 +214,7 @@ describe('monotonicity in gust speed', () => {
       widthY_m: 9,
       materialId: 'structural-steel',
       lateralSystem: 'braced-frame' as const,
+      facade: 'exposed' as const,
     })),
     foundation: { type: 'piled', embedmentDepth_m: 2, anchorCapacity_kN: 400 },
     exposureCategory: 'B',
@@ -283,6 +287,10 @@ describe('tall and light vs squat and heavy', () => {
       widthY_m: 6,
       materialId: 'cross-laminated-timber',
       lateralSystem: 'braced-frame' as const,
+      // Frame only on both towers: this test is about slenderness, and a
+      // facade would add weight in proportion to surface area, which is a
+      // different effect entirely.
+      facade: 'exposed' as const,
     })),
     foundation,
     exposureCategory: 'C',
@@ -296,6 +304,7 @@ describe('tall and light vs squat and heavy', () => {
       widthY_m: 20,
       materialId: 'reinforced-concrete',
       lateralSystem: 'shear-wall' as const,
+      facade: 'exposed' as const,
     })),
     foundation,
     exposureCategory: 'C',
@@ -366,6 +375,7 @@ describe('slenderness is what drives it, not height alone', () => {
           widthY_m: width,
           materialId: 'cross-laminated-timber',
           lateralSystem: 'braced-frame' as const,
+          facade: 'exposed' as const,
         })),
         foundation: {
           type: 'strip-footing',

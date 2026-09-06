@@ -34,10 +34,26 @@ export const BAND_HEX: Readonly<Record<UtilizationBand, string>> = {
   fail: '#ef4444',
 }
 
+/**
+ * The same three states, darkened until they are legible as text on the
+ * studio's paper. `BAND_HEX` is tuned for a shaded 3D box against a sky;
+ * #f59e0b as 11px type on #fff7ef is not readable, and quietly using it there
+ * would make "caution" the hardest word on screen to read.
+ *
+ * Same three bands, same meanings, one lightness apart — so a table cell and
+ * the box it describes still agree. `index.css` mirrors these as
+ * `--color-*-ink` for the same reason it mirrors the hexes above.
+ */
+export const BAND_INK_HEX: Readonly<Record<UtilizationBand, string>> = {
+  safe: '#15803d',
+  caution: '#b45309',
+  fail: '#b91c1c',
+}
+
 export const BAND_TEXT_CLASS: Readonly<Record<UtilizationBand, string>> = {
-  safe: 'text-safe',
-  caution: 'text-caution',
-  fail: 'text-fail',
+  safe: 'text-safe-ink',
+  caution: 'text-caution-ink',
+  fail: 'text-fail-ink',
 }
 
 export const BAND_LABEL: Readonly<Record<UtilizationBand, string>> = {

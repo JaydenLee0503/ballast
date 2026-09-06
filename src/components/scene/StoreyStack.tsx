@@ -1,5 +1,6 @@
 /**
- * The building itself: one box per storey, coloured by utilisation.
+ * The building itself: one box per storey, coloured by utilisation and glazed
+ * by its facade.
  *
  * COORDINATE MAPPING. The engine works in plan X/Y with height as a separate
  * field; three.js is Y-up. So:
@@ -13,21 +14,156 @@
  * storey as a gross volume times a structural fraction — it has no columns,
  * no beams and no core — so drawing a frame would promise resolution the
  * physics does not have.
+ *
+ * The windows are the exception, and they are not decoration: a storey's
+ * window-to-wall ratio is a field of `Storey`, the engine charges carbon,
+ * money and weight for it, and the panes on screen cover exactly that
+ * fraction of the wall. Choosing a curtain wall makes the building glassier
+ * *and* lighter *and* more expensive, and the picture is the honest one.
+ *
+ * Utilisation still owns the colour. Panes are a tint of the band colour
+ * rather than a colour of their own, so a red storey with a lot of glass is
+ * still unmistakably a red storey — the safety readout is not something the
+ * facade control gets to interfere with.
  */
 
+import { useEffect, useMemo, type RefObject } from 'react'
 import { Edges } from '@react-three/drei'
-import type { ThreeEvent } from '@react-three/fiber'
-import type { StoreyResult, Structure } from '@/engine'
+import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { FACADE, type Storey, type StoreyResult, type Structure } from '@/engine'
 import { BAND_HEX, utilizationBand } from '@/lib/palette.ts'
+import { createWindowedMaterial } from './windows.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
 const STOREY_GAP_M = 0.08
+
+/**
+ * Window bay for the student's own building. Roughly a domestic window pitch,
+ * so a 12 m elevation reads as four bays rather than as an abstraction — see
+ * `windows.ts` for how a face turns this into whole panes.
+ */
+const BAY_WIDTH_M = 3.2
+const BAY_HEIGHT_M = 3.6
+/** Rather more of the lights on than the neighbourhood: this one is occupied. */
+const LIT_FRACTION = 0.55
+
+interface StoreyBoxProps {
+  storey: Storey
+  result: StoreyResult
+  index: number
+  selected: boolean
+  hovered: boolean
+  /** Eased 0..1 time of day, shared with the sky. Lights the panes. */
+  night: RefObject<number>
+  onSelect: (index: number | null) => void
+  onHover: (index: number, clientX: number, clientY: number) => void
+  onHoverEnd: (index: number) => void
+}
+
+function StoreyBox({
+  storey,
+  result,
+  index,
+  selected,
+  hovered,
+  night,
+  onSelect,
+  onHover,
+  onHoverEnd,
+}: StoreyBoxProps) {
+  // One material per storey, because each carries its own band colour, its own
+  // glazing ratio and its own size. Built once and mutated, rather than
+  // rebuilt per render: a new material is a new shader program compile.
+  const windowed = useMemo(
+    () =>
+      createWindowedMaterial(
+        { roughness: 0.55, metalness: 0.05 },
+        {
+          instanced: false,
+          bayWidth_m: BAY_WIDTH_M,
+          bayHeight_m: BAY_HEIGHT_M,
+          litFraction: LIT_FRACTION,
+        },
+      ),
+    [],
+  )
+  useEffect(() => () => windowed.dispose(), [windowed])
+
+  const band = utilizationBand(result.utilization)
+  const colour = BAND_HEX[band]
+  const boxHeight = Math.max(0.1, storey.height_m - STOREY_GAP_M)
+  const windowToWallRatio = FACADE[storey.facade].windowToWallRatio
+
+  useEffect(() => {
+    // Selection is the loud state and hover the quiet one, so that pointing at
+    // a storey never looks like having picked it.
+    windowed.setAppearance(colour, selected ? 0.45 : hovered ? 0.22 : 0.05)
+  }, [windowed, colour, selected, hovered])
+
+  useEffect(() => {
+    windowed.setWindowToWallRatio(windowToWallRatio)
+    // The shader lays panes out against the real face sizes, so it has to be
+    // told them; the geometry knows, but the vertex shader only sees corners.
+    windowed.setSize(storey.widthX_m, boxHeight, storey.widthY_m)
+  }, [windowed, windowToWallRatio, storey.widthX_m, storey.widthY_m, boxHeight])
+
+  // The one per-frame value: the panes come on as the sky goes down.
+  useFrame(() => windowed.setNight(night.current))
+
+  return (
+    <mesh
+      castShadow
+      receiveShadow
+      material={windowed.material}
+      position={[0, result.baseElevation_m + storey.height_m / 2, 0]}
+      onClick={(event: ThreeEvent<MouseEvent>) => {
+        // Without this the click passes through to every storey behind.
+        event.stopPropagation()
+        onSelect(selected ? null : index)
+      }}
+      onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation()
+        document.body.style.cursor = 'pointer'
+        onHover(index, event.nativeEvent.clientX, event.nativeEvent.clientY)
+      }}
+      onPointerMove={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation()
+        onHover(index, event.nativeEvent.clientX, event.nativeEvent.clientY)
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = ''
+        onHoverEnd(index)
+      }}
+    >
+      <boxGeometry args={[storey.widthX_m, boxHeight, storey.widthY_m]} />
+      {/* Ink by default, the studio's own outline colour; paper on hover;
+          white on selection. */}
+      <Edges color={selected ? '#ffffff' : hovered ? '#fff7ef' : '#2f2748'} />
+    </mesh>
+  )
+}
 
 export interface StoreyStackProps {
   structure: Structure
   storeys: readonly StoreyResult[]
   selectedStoreyIndex: number | null
   onSelect: (index: number | null) => void
+  hoveredStoreyIndex: number | null
+  night: RefObject<number>
+  /**
+   * Called on entering a storey and on every move across it, with the pointer
+   * in client coordinates. The caller decides what to do with the position;
+   * `Viewport` writes it straight to the DOM so following the pointer costs no
+   * React renders.
+   */
+  onHover: (index: number, clientX: number, clientY: number) => void
+  /**
+   * The pointer left this storey. Takes the index rather than nothing, because
+   * moving between two adjacent storeys fires an exit and an entry with no
+   * ordering guarantee worth relying on — the caller can then clear only if
+   * the storey leaving is still the one it thinks is hovered.
+   */
+  onHoverEnd: (index: number) => void
 }
 
 export function StoreyStack({
@@ -35,6 +171,10 @@ export function StoreyStack({
   storeys,
   selectedStoreyIndex,
   onSelect,
+  hoveredStoreyIndex,
+  night,
+  onHover,
+  onHoverEnd,
 }: StoreyStackProps) {
   // Pair geometry with results by index. flatMap over a possibly-short results
   // array rather than indexing with `!`, so a mismatch renders less rather
@@ -46,42 +186,20 @@ export function StoreyStack({
 
   return (
     <group>
-      {items.map(({ storey, result, index }) => {
-        const band = utilizationBand(result.utilization)
-        const selected = selectedStoreyIndex === index
-        const boxHeight = Math.max(0.1, storey.height_m - STOREY_GAP_M)
-
-        return (
-          <mesh
-            key={index}
-            castShadow
-            receiveShadow
-            position={[0, result.baseElevation_m + storey.height_m / 2, 0]}
-            onClick={(event: ThreeEvent<MouseEvent>) => {
-              // Without this the click passes through to every storey behind.
-              event.stopPropagation()
-              onSelect(selected ? null : index)
-            }}
-            onPointerOver={(event: ThreeEvent<PointerEvent>) => {
-              event.stopPropagation()
-              document.body.style.cursor = 'pointer'
-            }}
-            onPointerOut={() => {
-              document.body.style.cursor = ''
-            }}
-          >
-            <boxGeometry args={[storey.widthX_m, boxHeight, storey.widthY_m]} />
-            <meshStandardMaterial
-              color={BAND_HEX[band]}
-              roughness={0.55}
-              metalness={0.05}
-              emissive={BAND_HEX[band]}
-              emissiveIntensity={selected ? 0.45 : 0.05}
-            />
-            <Edges color={selected ? '#ffffff' : '#0c0a09'} />
-          </mesh>
-        )
-      })}
+      {items.map(({ storey, result, index }) => (
+        <StoreyBox
+          key={index}
+          storey={storey}
+          result={result}
+          index={index}
+          selected={selectedStoreyIndex === index}
+          hovered={hoveredStoreyIndex === index}
+          night={night}
+          onSelect={onSelect}
+          onHover={onHover}
+          onHoverEnd={onHoverEnd}
+        />
+      ))}
     </group>
   )
 }

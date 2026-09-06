@@ -29,18 +29,31 @@
   font-display: swap;
 }
 
-/* The studio is dark by default: the 3D viewport is the focus and a light
-   chrome washes it out.
+/* One palette for the whole product. The studio used to be a dark instrument
+   panel against an empty grid; now the viewport looks out over a daylit city,
+   and a black chrome around it read as a hole cut in the page. So the studio
+   wears the landing page's warm paper and ink — the box and the game finally
+   look like the same object.
 
    The three utilisation colours must match BAND_HEX in src/lib/palette.ts,
    which is the source of truth — three.js cannot parse oklch(), so the
    viewport reads hex from TypeScript while the HTML reads these tokens. If
-   you change one, change the other. */
+   you change one, change the other.
+
+   The `-ink` variants are the same three states darkened until they are
+   legible as *text* on paper. A shaded 3D box can be #f59e0b; the word
+   "caution" at 11px on #fff7ef cannot. They mirror BAND_INK_HEX, in the same
+   file, for the same reason. */
 @theme {
   --color-safe: #22c55e;
   --color-caution: #f59e0b;
   --color-fail: #ef4444;
   --color-wind: #60a5fa;
+
+  --color-safe-ink: #15803d;
+  --color-caution-ink: #b45309;
+  --color-fail-ink: #b91c1c;
+  --color-wind-ink: #1d4ed8;
 
   /* The landing page's own palette. Warm paper and a soft indigo ink rather
      than black-on-white, because the page has to look friendly to a twelve
@@ -60,4 +73,71 @@
   --font-display: "Fredoka", ui-rounded, "Trebuchet MS", system-ui, sans-serif;
   --font-body: "Nunito", ui-rounded, "Segoe UI", system-ui, sans-serif;
   --font-pixel: "Pixelify Sans", "Courier New", ui-monospace, monospace;
+}
+
+/* The shape language, in one place, because it repeats across every panel in
+   the studio and drifting copies of it is exactly how a themed UI stops
+   looking themed. Two weights: `sticker` for the things that should sit on
+   top of the page — the dials, the primary panels — and `slab` for the quiet
+   containers inside them. Both are the landing page's cards, one step calmer,
+   because a studio panel is read for an hour and a landing page for a minute.
+
+   The offset shadow is flat and un-blurred on purpose: it reads as a cut-out
+   sticker rather than as depth, which is the whole idea. */
+@utility sticker {
+  border-radius: 1rem;
+  border: 2px solid var(--color-ink);
+  background-color: #ffffff;
+  box-shadow: 4px 4px 0 0 var(--color-ink);
+}
+
+@utility slab {
+  border-radius: 0.75rem;
+  border: 2px solid color-mix(in oklab, var(--color-ink) 12%, transparent);
+  background-color: #ffffff;
+}
+
+/* Range inputs are the one control here the browser draws itself, and the
+   default is a thin grey line that looks nothing like the rest. Chunky ink
+   track, chunky ink-outlined thumb — the same sticker idea at control size. */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 1.1rem;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  border: 2px solid var(--color-ink);
+  background-color: color-mix(in oklab, var(--color-bloom) 30%, #ffffff);
+}
+input[type="range"]::-moz-range-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  border: 2px solid var(--color-ink);
+  background-color: color-mix(in oklab, var(--color-bloom) 30%, #ffffff);
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  margin-top: -0.375rem;
+  height: 1.1rem;
+  width: 1.1rem;
+  border-radius: 999px;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-coral);
+}
+input[type="range"]::-moz-range-thumb {
+  height: 1.1rem;
+  width: 1.1rem;
+  border-radius: 999px;
+  border: 2px solid var(--color-ink);
+  background-color: var(--color-coral);
+}
+input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

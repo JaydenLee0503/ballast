@@ -27,7 +27,7 @@
  * that needs a CDN is a demo that fails on conference wifi.
  */
 
-import { memo, useMemo, useRef } from 'react'
+import { memo, useMemo, useRef, type RefObject } from 'react'
 import { Instance, Instances } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import {
@@ -45,7 +45,8 @@ import {
   type PointsMaterial,
   type Points,
 } from 'three'
-import { nightProgress, skyPalette, sunDirection } from '@/lib/sky.ts'
+import { skyPalette, sunDirection } from '@/lib/sky.ts'
+import { createWindowedMaterial, type WindowedMaterial } from './windows.ts'
 import {
   CARS,
   DASHES,
@@ -75,9 +76,6 @@ const KEY_LIGHT_DISTANCE_M = 320
  * back half of the day low (see `sky.ts`).
  */
 const SHADOW_EXTENT_M = 120
-/** Seconds-ish constant for easing the sky toward its target. */
-const SKY_EASE_RATE = 2.2
-
 const GRASS_HEX = '#5c7746'
 const ASPHALT_HEX = '#33333a'
 const SIDEWALK_HEX = '#8e8b85'
@@ -123,85 +121,35 @@ const STAR_POSITIONS: Float32Array = STAR_DIRECTIONS.map(
 )
 
 /**
- * The neighbourhood's facades, with windows that come on after dark.
- *
- * The windows are a hash in the fragment shader rather than a texture — the
- * scene fetches nothing at runtime — evaluated in metres of facade rather than
- * in UV, so a 60 m tower and a 10 m walk-up get the same size of window
- * instead of the same *number* of them. `instanceMatrix` supplies the per
- * instance scale, which is why this material is only ever used on an
- * `InstancedMesh`.
- *
- * The one thing that changes about it is how brightly those windows burn, and
- * that is handed back as a setter rather than as the uniform itself: the
- * uniform object has to stay the exact one the compiled program holds, so
- * nothing outside here should be in a position to replace it.
+ * How much of a neighbour's wall is glass. A fixed, middling figure: these are
+ * background buildings and nobody chose their facades, so they get one that
+ * reads as "office block" and stays out of the way.
  */
-function useFacadeMaterial() {
+const NEIGHBOUR_WINDOW_RATIO = 0.34
+const NEIGHBOUR_BAY_WIDTH_M = 3.2
+const NEIGHBOUR_BAY_HEIGHT_M = 3.5
+/** Fewer lights on than the student's own tower; it is late and this is a city. */
+const NEIGHBOUR_LIT_FRACTION = 0.4
+
+/**
+ * The neighbourhood's facades. The same window shader the student's building
+ * uses (`windows.ts`), on an instanced material — one home for what a window
+ * looks like, so the tower and the block across the road are drawn by the
+ * same code and read as the same kind of object.
+ */
+function useNeighbourMaterial(): WindowedMaterial {
   return useMemo(() => {
-    const glow = { value: 0 }
-    const material = new MeshStandardMaterial({ roughness: 0.88, metalness: 0 })
-
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms['uWindowGlow'] = glow
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           varying vec3 vFacadePos;
-           varying vec3 vFacadeNormal;`,
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           vec3 facadeScale = vec3(
-             length(instanceMatrix[0].xyz),
-             length(instanceMatrix[1].xyz),
-             length(instanceMatrix[2].xyz)
-           );
-           vFacadePos = position * facadeScale;
-           vFacadeNormal = normal;`,
-        )
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           uniform float uWindowGlow;
-           varying vec3 vFacadePos;
-           varying vec3 vFacadeNormal;
-           float facadeHash(vec2 cell) {
-             vec2 p = fract(cell * vec2(123.34, 456.21));
-             p += dot(p, p + 45.32);
-             return fract(p.x * p.y);
-           }`,
-        )
-        .replace(
-          '#include <emissivemap_fragment>',
-          `#include <emissivemap_fragment>
-           if (uWindowGlow > 0.001) {
-             vec3 face = abs(vFacadeNormal);
-             // Roofs get no windows; only the four walls.
-             if (face.y < 0.5) {
-               vec2 wall = face.x > 0.5 ? vFacadePos.zy : vFacadePos.xy;
-               vec2 grid = wall / vec2(3.4, 3.6);
-               float lit = step(0.58, facadeHash(floor(grid)));
-               vec2 within = fract(grid);
-               float pane =
-                 step(0.20, within.x) * step(within.x, 0.80) *
-                 step(0.26, within.y) * step(within.y, 0.74);
-               totalEmissiveRadiance +=
-                 vec3(1.0, 0.78, 0.45) * lit * pane * uWindowGlow * 1.8;
-             }
-           }`,
-        )
-    }
-
-    return {
-      material,
-      setWindowGlow(value: number) {
-        glow.value = value
+    const windowed = createWindowedMaterial(
+      { roughness: 0.88, metalness: 0 },
+      {
+        instanced: true,
+        bayWidth_m: NEIGHBOUR_BAY_WIDTH_M,
+        bayHeight_m: NEIGHBOUR_BAY_HEIGHT_M,
+        litFraction: NEIGHBOUR_LIT_FRACTION,
       },
-    }
+    )
+    windowed.setWindowToWallRatio(NEIGHBOUR_WINDOW_RATIO)
+    return windowed
   }, [])
 }
 
@@ -214,6 +162,13 @@ function useFacadeMaterial() {
  * stack of road markings wants, so height offsets that look fine up close
  * shimmer when the camera pulls back to frame a tall building. Polygon offset
  * is scale-free and does not.
+ *
+ * "Click the ground to deselect" is bound to the four big surfaces one by one
+ * rather than to the group around them. Anything carrying a pointer handler
+ * joins r3f's interaction list, and that list is raycast *recursively* on every
+ * pointermove to work out what is hovered — one handler on the group would put
+ * five hundred kerb slabs and lane dashes through a ray test every time the
+ * mouse twitched, to answer a question only the ground under them can answer.
  */
 const Ground = memo(function Ground({
   onGroundClick,
@@ -221,9 +176,9 @@ const Ground = memo(function Ground({
   onGroundClick: () => void
 }) {
   return (
-    <group onClick={onGroundClick}>
+    <group>
       {/* Open ground. Everything else is laid on top of it. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow onClick={onGroundClick}>
         <planeGeometry args={[GROUND_EXTENT_M, GROUND_EXTENT_M]} />
         <meshStandardMaterial color={GRASS_HEX} roughness={1} />
       </mesh>
@@ -237,6 +192,7 @@ const Ground = memo(function Ground({
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, 0, centre]}
           receiveShadow
+          onClick={onGroundClick}
         >
           <planeGeometry args={[ROAD_LENGTH_M, 2 * ROAD_HALF_M]} />
           <meshStandardMaterial
@@ -254,6 +210,7 @@ const Ground = memo(function Ground({
           rotation={[-Math.PI / 2, 0, 0]}
           position={[centre, 0, 0]}
           receiveShadow
+          onClick={onGroundClick}
         >
           <planeGeometry args={[2 * ROAD_HALF_M, ROAD_LENGTH_M]} />
           <meshStandardMaterial
@@ -316,7 +273,7 @@ const Ground = memo(function Ground({
       {/* The plot: hardstanding rather than grass, because this is a site with
           a building going up on it. Clicking it clears the storey selection,
           which is the gesture people reach for without being told. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow onClick={onGroundClick}>
         <planeGeometry args={[SITE_PAD_HALF_M * 2, SITE_PAD_HALF_M * 2]} />
         <meshStandardMaterial
           color={PAD_HEX}
@@ -425,17 +382,13 @@ const City = memo(function City({
 })
 
 export interface WorldProps {
-  /** Total height of the design. Drives the time of day and nothing else. */
-  totalHeight_m: number
+  /** Eased 0..1 time of day, from `useNightProgress`. */
+  night: RefObject<number>
   onGroundClick: () => void
 }
 
-export function World({ totalHeight_m, onGroundClick }: WorldProps) {
-  const facade = useFacadeMaterial()
-
-  // Eased, so adding a storey slides the light along rather than cutting to a
-  // new time of day. Seeded at the target so the first frame is already right.
-  const night = useRef(nightProgress(totalHeight_m))
+export function World({ night, onGroundClick }: WorldProps) {
+  const facade = useNeighbourMaterial()
 
   const keyLight = useRef<DirectionalLight>(null)
   const hemisphere = useRef<HemisphereLight>(null)
@@ -456,9 +409,7 @@ export function World({ totalHeight_m, onGroundClick }: WorldProps) {
     [],
   )
 
-  useFrame((state, delta) => {
-    const target = nightProgress(totalHeight_m)
-    night.current += (target - night.current) * (1 - Math.exp(-delta * SKY_EASE_RATE))
+  useFrame((state) => {
     const t = night.current
     const palette = skyPalette(t)
     const direction = sunDirection(t)
@@ -502,7 +453,7 @@ export function World({ totalHeight_m, onGroundClick }: WorldProps) {
     if (starMaterial.current) starMaterial.current.opacity = palette.starOpacity
     if (stars.current) stars.current.visible = palette.starOpacity > 0.01
 
-    facade.setWindowGlow(palette.windowGlow)
+    facade.setNight(palette.windowGlow)
   })
 
   return (

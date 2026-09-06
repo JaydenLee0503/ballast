@@ -2,9 +2,11 @@
  * The front door.
  *
  * Ballast is a tool a fourteen year old should want to open, so the page is
- * warm paper, rounded blocks and short sentences rather than the studio's dark
- * instrument panel. The two do not match, deliberately: this is the box the
- * game comes in, and the studio is the game.
+ * warm paper, rounded blocks and short sentences. The studio wears the same
+ * clothes — it is the same paper, ink and sticker shadows one step calmer,
+ * because a panel is read for an hour and a landing page for a minute. This is
+ * the box the game comes in, and they should look like they came from the same
+ * shelf.
  *
  * The look is built from two ideas, in this order. Primary is *charming* —
  * chunky rounded shapes, sticker shadows, a pastel tower that leans a bit.

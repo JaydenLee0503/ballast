@@ -41,6 +41,9 @@ export {
   grossFloorArea_m2,
   structuralVolume_m3,
   storeyQuantities,
+  facadeArea_m2,
+  facadeQuantities,
+  type FacadeQuantities,
 } from './sustainability.ts'
 export {
   overturningMoment_kNm,

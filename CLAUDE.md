@@ -75,9 +75,12 @@ src/
       WindArrows.tsx   per-storey arrows, length from lateralForce_kN
       World.tsx        sky, sun, streets, trees, traffic, neighbours
       scenery.ts       the deterministic layout of all of that
+      windows.ts       the window shader, shared by tower and neighbourhood
+      useNightProgress.ts  the eased time of day, shared by sky and windows
     ScorePanel.tsx     the three dials + governing failure mode
     StoreyTable.tsx    per-storey breakdown, selectable rows
-    DesignControls.tsx every slider and select
+    StoreyTooltip.tsx  the hover card over a storey in the 3D view
+    DesignControls.tsx every slider and select, as Basic + Advanced
     SavedDesigns.tsx   save, reopen, share
   ai/
     types.ts           CritiqueContext + Critique. no imports, by design
@@ -88,6 +91,7 @@ src/
     client.ts          POSTs to /api/critique, then parses and guards
   lib/
     orbit.ts           rigid camera rotation about an arbitrary pivot
+    facade.ts          human names for the envelope systems. copy only
     palette.ts         utilisation colour bands (source of truth for colour)
     sky.ts             building height -> time of day, as a pure palette
     format.ts          display formatting only; no arithmetic that means anything
@@ -161,7 +165,10 @@ documented in situ; this is the index.
 | Only along-wind load case | `wind.ts` header | No across-wind or torsional cases |
 | Structural self-weight only; no superimposed dead or live load | `stability.ts` | Conservative for overturning, and it is what makes the slenderness lesson land |
 | Section modulus smears material across the plan | `stability.ts` `effectiveSectionModulus_m3` | Conservative by ~2x; fine for relative utilisation, not for member sizing |
-| Carbon is A1-A3, frame only, no sequestration | `sustainability.ts` header | A whole-building figure would be much higher |
+| Carbon is A1-A3, frame + envelope, no sequestration | `sustainability.ts` header | A whole-building figure would still be much higher |
+| The facade is a dead load, never structure | `types.ts` `FacadeSystem` | Glazing changes weight — and so overturning and sliding — but never stiffness or drift |
+| Facade rates are assembly archetypes, not EPDs | `constants.ts` `FACADE` | 3x differences are real, 10% ones are noise. Warned on every analysis that uses one |
+| Facade area is perimeter x height, no roof | `sustainability.ts` `facadeArea_m2` | A slab block pays for more skin than a square one of the same floor area |
 | Costs are indicative, not surveyed | `data/materials.json` | Flagged as a warning on every analysis. The weakest data in the project |
 
 ---
@@ -237,6 +244,17 @@ rules in `schema.ts`:
 `schema.test.ts` ends with the property the module exists for: anything the
 parser accepts, `analyze()` can run.
 
+**Schema 2 added `Storey.facade`, and version 1 still loads.** The migration is
+where "reject, don't repair" gets tested rather than merely asserted. A
+version-1 design had no concept of an envelope — its carbon, cost and weight
+were a bare frame — so it migrates to `facade: 'exposed'`, the one system whose
+three figures are all zero. The design therefore reads back with *exactly* the
+numbers it was saved with. Any friendlier-looking default would hand a student
+a carbon figure for cladding they never chose, which is the same failure as
+substituting an unknown material, only quieter. Re-saving stamps version 2 and
+the choice becomes theirs. `schema.test.ts` pins all of that, including that
+the migrated design scores identically to how version 1 scored it.
+
 **One set of bounds.** `lib/limits.ts` holds the editing limits, and both the
 controls and the parser read them. If persistence had its own numbers, a saved
 file could restore a state the sliders can no longer express — 40 storeys on a
@@ -254,6 +272,35 @@ key scan on `list()` and buys two things: a save rewrites one entry rather than
 all of them, and one corrupt record loses one design instead of the library. An
 unreadable record is skipped and left in place — a later version may be able to
 read what this one cannot.
+
+**Supabase is the second `DesignLibrary`**, chosen at runtime by
+`store/useDesignLibrary.ts`: account, then browser, then nowhere. The component
+that saves and loads cannot tell which it got, which is what the async
+interface was for before there was a network behind it.
+
+A row is untrusted input exactly like a localStorage blob — another device, an
+older build, or anyone holding the anon key and a REST client could have
+written it — so rows go back through `parseDesign`, and one unreadable row
+loses one design rather than the list.
+
+`user_id` is never sent. The column defaults to `auth.uid()` in Postgres, so
+ownership is decided by the session the request is made with and cannot be
+forged; Row Level Security then restricts every read and write to that id.
+**RLS is the security boundary, not the anon key**, which is public by design
+and does ship in the bundle. `VITE_SUPABASE_*` being prefixed where
+`FEATHERLESS_API_KEY` must not be is that distinction, not an inconsistency.
+The `service_role` key belongs in neither.
+
+Sign-in is anonymous, because the landing page promises "no account, no
+download" and has to mean it. The cost is that the identity lives in one
+browser: clear site data and those designs are unreachable, which is why share
+links remain how a design travels between people. `ensureAnonymousSession`
+memoises a *promise* rather than a boolean, because StrictMode mounts effects
+twice and two concurrent calls would each create a separate anonymous user.
+
+**A cloud failure falls back to browser storage and says so.** Saving locally
+beats a save button that throws, and on bad conference wifi that is the
+difference between a working demo and a broken one.
 
 **Share links carry the design.** The payload is the same `SavedDesign`,
 base64url in the URL *fragment*, validated by the same parser — no second
@@ -273,9 +320,12 @@ where the student is now, on failure so a refresh does not reproduce it.
 ## The landing page
 
 Ballast is a tool a fourteen year old should want to open, so the landing page
-is warm paper, rounded blocks and short sentences while the studio is a dark
-instrument panel. They deliberately do not match: this is the box the game
-comes in, and the studio is the game.
+is warm paper, rounded blocks and short sentences. **The studio wears the same
+clothes.** It used to be a dark instrument panel, and that was right while the
+viewport was boxes on an empty grid; the moment the viewport became a daylit
+city, black chrome around it read as a hole cut in the page. The box and the
+game look like one object now — same paper, same ink outlines, same sticker
+shadows, same three faces.
 
 **Two ideas, in this order.** Primary is *charming* — chunky rounded shapes,
 sticker shadows (hard offset, no blur), a pastel isometric tower that leans.
@@ -311,6 +361,88 @@ whoever followed it was sent a building, not an invitation to read the pitch.
 
 ## UI conventions
 
+- **The studio wears the landing page's clothes.** Warm paper, ink outlines,
+  hard un-blurred offset shadows, Fredoka for headings, Nunito for body,
+  Pixelify Sans for the small eyebrow labels — the same palette and the same
+  three faces, one step calmer, because a panel is read for an hour and a
+  landing page for a minute. The shape language itself is two `@utility` rules
+  in `index.css`, `sticker` (the things that sit on top: dials, the primary
+  panels) and `slab` (the quiet containers inside them), so the look has one
+  home rather than a dozen drifting copies of a class string.
+- **The utilisation colours have a second, darker set for type.**
+  `BAND_HEX` is tuned for a shaded 3D box against a sky; #f59e0b as 11px text
+  on #fff7ef is not readable, so `BAND_INK_HEX` (mirrored as `--color-*-ink`)
+  is the same three states darkened until they are. Same bands, same meanings,
+  one lightness apart. Fills — the dial bars, the legend swatches — still use
+  the raw hex, because those have to read as the same colour as the storey they
+  describe.
+- **The taper is an input, not a second copy of the widths.** `Structure`
+  stores per-storey plans and always has; the engine has always read them and a
+  saved design round-trips them exactly. The store keeps the *shape control*
+  that generated them, because you cannot recover "the user asked for a 30%
+  taper" from a list of numbers. Widths are always regenerated from (base,
+  taper) rather than scaled from what is already there — scaling accumulates
+  rounding, and after a dozen slider drags a prismatic tower is quietly a cone.
+  `loadDesign` re-derives it from the design's own widths so the control
+  describes what is on screen.
+- **The panel is split by how much you have to know, not by what it touches.**
+  *Basics* is the loop the product is about — stack storeys, size the plan,
+  turn the storm up, watch what goes red — and needs no structural vocabulary
+  at all. *Advanced* is everything that wants a sentence of background first:
+  the material library, the lateral system, terrain exposure, hold-down
+  capacity. Both write to the same store and the engine sees one structure
+  either way; the split is presentational, and nothing a design on screen
+  depends on is hidden by it. The scorecard and the storey table sit *outside*
+  the tabs, so whichever is open the reading of the design is on screen — and
+  the modelling caveats show under both control tabs, because "you are past
+  where this model is accurate" is the sentence a beginner most needs.
+- **Windows are model, not decoration.** A storey's window-to-wall ratio is a
+  field of `Storey`; the engine charges carbon, money and weight for it; and
+  the panes on screen cover exactly that fraction of the wall, because
+  `windows.ts` sizes a pane at `sqrt(ratio)` of its bay in each direction. So
+  the ratio in the picture and the ratio in `FACADE` are the same number and
+  nobody had to tune it by eye. Panes are laid out per *face*, on a bay count
+  rounded from the face width, so both elevations of a box get whole windows
+  edge to edge — the thing a fixed metre grid gets visibly wrong at corners.
+  One shader for the student's tower and the neighbourhood both, so a glazed
+  tower and a glazed office block read as the same kind of object.
+- **Utilisation still owns the colour.** Panes are a cool *tint* of the band
+  colour rather than a colour of their own, so a red storey with a lot of glass
+  is unmistakably still a red storey. The facade control does not get to
+  interfere with the safety readout.
+- **Hovering a storey explains it; clicking it selects it.** `StoreyTooltip` is
+  deliberately five lines — how hard the storey is working, what it is made of,
+  how much wind is on it, how far it leans. That is the set that answers "why
+  is this one red"; the storey table is right there for the rest, and a hover
+  card that repeated it would be unreadable at the speed people move a mouse.
+  Every figure is a field off `StoreyResult`, and the percentage in the pill is
+  the same `utilization` that chose the colour of the box under the cursor, so
+  the two cannot disagree. Hover is the quiet highlight and selection the loud
+  one, so pointing never looks like having picked.
+- **The hover card's position never goes through React.** Which storey is
+  hovered is state; where the card sits is written straight to the DOM in the
+  event handler, because that changes on every `pointermove` and a render per
+  move would walk the whole scene tree to move one div. Re-setting the same
+  index is a no-op for React, so crossing one storey costs two style writes and
+  nothing else. Dragging hides it — a drag is an orbit, not an inspection.
+- **Only the big ground surfaces carry the deselect handler**, not the group
+  around them. Anything with a pointer handler joins r3f's interaction list,
+  and that list is raycast *recursively* on every `pointermove`; one `onClick`
+  on the scenery group would put five hundred kerb slabs and lane dashes
+  through a ray test every time the mouse twitched.
+- **The panel folds, and folding is only layout.** Closed, the grid column goes
+  to zero and the panel is *clipped*, not unmounted: it keeps its tab, its
+  scroll position and any critique already fetched, so reopening is instant
+  rather than a reload. `inert` takes it off the tab order and the
+  accessibility tree, which clipping alone does not do, and the inner column
+  holds its full width throughout so the contents slide out of view instead of
+  reflowing on the way out. The state is session-only on purpose — a panel that
+  stayed hidden across a reload would leave a student with no numbers and no
+  memory of having hidden them.
+- **Range inputs are styled in `index.css`, not in the component.** The browser
+  draws them itself and the parts that need styling are pseudo-elements
+  Tailwind has no selector for. It is the one place a control's appearance
+  lives away from its markup, and the component says so.
 - **Coordinate mapping.** The engine works in plan X/Y with height separate;
   three.js is Y-up. So `widthX_m -> three X`, `widthY_m -> three Z`,
   `height_m -> three Y`. Get it wrong and the building looks right while the

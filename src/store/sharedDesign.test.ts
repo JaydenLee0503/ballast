@@ -29,6 +29,7 @@ function sharedDesign() {
         ...storey,
         materialId: 'structural-steel',
         lateralSystem: 'braced-frame' as const,
+        facade: 'punched' as const,
       })),
     },
     { ...DEFAULT_HAZARD, gustSpeed_kmh: 210 },

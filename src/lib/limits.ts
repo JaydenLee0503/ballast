@@ -19,6 +19,19 @@ export interface Limits {
 }
 
 export const STOREY_COUNT_LIMITS: Limits = { min: 1, max: 24 }
+
+/**
+ * How far the plan may shrink from the ground storey to the top one, as a
+ * fraction. 0 is a prismatic block; 0.6 means the top storey is 40% of the
+ * base width.
+ *
+ * Unlike the others this one bounds no field of `Structure` — a taper is a way
+ * of *generating* per-storey widths, and what gets stored is the widths. It
+ * lives here anyway because it is an editing bound and this is where those
+ * are, and because the widths it generates must land inside
+ * `PLAN_WIDTH_LIMITS_M` for the parser to accept the result.
+ */
+export const TAPER_LIMITS: Limits = { min: 0, max: 0.6 }
 export const PLAN_WIDTH_LIMITS_M: Limits = { min: 4, max: 60 }
 export const GUST_SPEED_LIMITS_KMH: Limits = { min: 0, max: 300 }
 export const ANCHOR_CAPACITY_LIMITS_KN: Limits = { min: 0, max: 5000 }

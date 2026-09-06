@@ -34,8 +34,10 @@ import { Vector2, Vector3 } from 'three'
 import type { AnalysisResult, Structure, WindHazard } from '@/engine'
 import { rotateAboutPivot } from '@/lib/orbit.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
+import { StoreyTooltip } from './StoreyTooltip.tsx'
 import { FoundationBlock, StoreyStack } from './scene/StoreyStack.tsx'
 import { WindArrows } from './scene/WindArrows.tsx'
+import { useNightProgress } from './scene/useNightProgress.ts'
 import { World } from './scene/World.tsx'
 import { useDesignStore } from '@/store/design.ts'
 
@@ -277,11 +279,17 @@ function Scene({
   structure,
   hazard,
   frameNonce,
+  hoveredStoreyIndex,
+  onHoverStorey,
+  onHoverStoreyEnd,
 }: {
   result: AnalysisResult
   structure: Structure
   hazard: WindHazard
   frameNonce: number
+  hoveredStoreyIndex: number | null
+  onHoverStorey: (index: number, clientX: number, clientY: number) => void
+  onHoverStoreyEnd: (index: number) => void
 }) {
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
@@ -291,13 +299,13 @@ function Scene({
   // closure every render would rebuild several hundred instanced objects on
   // every slider tick.
   const clearSelection = useCallback(() => selectStorey(null), [selectStorey])
+  // Owned here, not inside the world, because the student's own windows come
+  // on at the same moment the neighbourhood's do.
+  const night = useNightProgress(dimensions.totalHeight_m)
 
   return (
     <>
-      <World
-        totalHeight_m={dimensions.totalHeight_m}
-        onGroundClick={clearSelection}
-      />
+      <World night={night} onGroundClick={clearSelection} />
 
       <FoundationBlock structure={structure} />
       <StoreyStack
@@ -305,6 +313,10 @@ function Scene({
         storeys={result.storeys}
         selectedStoreyIndex={selectedStoreyIndex}
         onSelect={selectStorey}
+        hoveredStoreyIndex={hoveredStoreyIndex}
+        night={night}
+        onHover={onHoverStorey}
+        onHoverEnd={onHoverStoreyEnd}
       />
       <WindArrows
         storeys={result.storeys}
@@ -346,8 +358,69 @@ export interface ViewportProps {
   hazard: WindHazard
 }
 
+/** Gap between the pointer and the hover card, in CSS pixels. */
+const TOOLTIP_OFFSET_PX = 16
+/** Card width plus the offset; past this from the right edge, it flips. */
+const TOOLTIP_REACH_PX = 240
+
 export function Viewport({ result, structure, hazard }: ViewportProps) {
   const [frameNonce, setFrameNonce] = useState(0)
+
+  // Which storey the pointer is over. State, because it changes the card's
+  // contents and the storey's own highlight.
+  const [hoveredStorey, setHoveredStorey] = useState<number | null>(null)
+  // Where the card sits. *Not* state: this changes on every pointermove, and a
+  // render per move would re-run the whole scene tree to move one div. The
+  // wrapper is always mounted so the ref is live before the first hover.
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  // A drag is an orbit, not an inspection; a card chasing the cursor through
+  // one is noise. Cleared on press, and hover returns on the next move.
+  const dragging = useRef(false)
+
+  useEffect(() => {
+    const onDown = () => {
+      dragging.current = true
+      setHoveredStorey(null)
+    }
+    const onUp = () => {
+      dragging.current = false
+    }
+    window.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+  }, [])
+
+  const handleHoverStorey = useCallback(
+    (index: number, clientX: number, clientY: number) => {
+      if (dragging.current) return
+      const node = tooltipRef.current
+      if (node) {
+        // Right of the pointer normally; flipped to the left near the edge of
+        // the window, where it would otherwise run off screen.
+        const flip = clientX > window.innerWidth - TOOLTIP_REACH_PX
+        node.style.left = `${clientX + (flip ? -TOOLTIP_OFFSET_PX : TOOLTIP_OFFSET_PX)}px`
+        node.style.top = `${clientY}px`
+        node.style.transform = flip
+          ? 'translate(-100%, -50%)'
+          : 'translate(0, -50%)'
+      }
+      // Same index re-set is a no-op for React, so moving across one storey
+      // costs nothing but the two style writes above.
+      setHoveredStorey((current) => (current === index ? current : index))
+    },
+    [],
+  )
+
+  const handleHoverStoreyEnd = useCallback((index: number) => {
+    // Only if it is still the one we think is hovered: moving from one storey
+    // to the next fires an exit and an entry, and this is order-independent.
+    setHoveredStorey((current) => (current === index ? null : current))
+  }, [])
 
   return (
     <div className="relative h-full w-full">
@@ -361,25 +434,45 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
           structure={structure}
           hazard={hazard}
           frameNonce={frameNonce}
+          hoveredStoreyIndex={hoveredStorey}
+          onHoverStorey={handleHoverStorey}
+          onHoverStoreyEnd={handleHoverStoreyEnd}
         />
       </Canvas>
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4">
-        <ul className="pointer-events-auto flex gap-4 rounded-md border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-xs backdrop-blur">
+      {/* Fixed, so the client coordinates written above need no conversion,
+          and always mounted so the ref exists before the first hover. */}
+      <div
+        ref={tooltipRef}
+        className="pointer-events-none fixed left-0 top-0 z-20"
+        aria-hidden="true"
+      >
+        <StoreyTooltip
+          result={result}
+          structure={structure}
+          index={hoveredStorey}
+        />
+      </div>
+
+      {/* Chrome over the canvas is paper, like the rest of the studio, and
+          opaque enough to hold its own against both a midday sky and a night
+          one — the background under it moves through the whole day. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
+        <ul className="pointer-events-auto flex gap-3 rounded-full border-2 border-ink bg-paper/95 px-3 py-1.5 text-xs shadow-[3px_3px_0_0_var(--color-ink)]">
           {LEGEND_BANDS.map((band) => (
             <li key={band} className="flex items-center gap-1.5">
               <span
-                className="inline-block size-2.5 rounded-sm"
+                className="inline-block size-2.5 rounded-full border border-ink"
                 style={{ backgroundColor: BAND_HEX[band] }}
               />
-              <span className="text-neutral-400">{BAND_LABEL[band]}</span>
+              <span className="text-ink/70">{BAND_LABEL[band]}</span>
             </li>
           ))}
         </ul>
         <button
           type="button"
           onClick={() => setFrameNonce((nonce) => nonce + 1)}
-          className="pointer-events-auto rounded-md border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-xs text-neutral-300 backdrop-blur hover:border-neutral-600 hover:text-neutral-100"
+          className="pointer-events-auto rounded-full border-2 border-ink bg-white px-3 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
         >
           Frame view
         </button>
@@ -388,7 +481,7 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
       {/* On a chip, not bare text: the sky behind it runs from midday blue to
           midnight, and no single text colour is legible against both. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
-        <p className="rounded-md border border-neutral-800 bg-neutral-950/70 px-3 py-1.5 text-center text-xs text-neutral-400 backdrop-blur">
+        <p className="rounded-full border-2 border-ink/70 bg-paper/90 px-3.5 py-1.5 text-center text-[0.7rem] text-ink/70">
           Drag to orbit &middot; scroll to zoom at the cursor &middot;
           double-click to re-centre &middot; click a storey to edit it
         </p>

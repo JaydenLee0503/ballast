@@ -63,6 +63,8 @@ export interface CritiqueStorey {
   label: number
   materialName: string
   lateralSystem: string
+  /** The envelope, by name. A label, deliberately not a figure. */
+  facadeName: string
   lateralForce_kN: number
   storeyShear_kN: number
   driftDenominator: number
@@ -93,6 +95,13 @@ export interface CritiqueContext {
   limits: CritiqueLimits
   storeys: CritiqueStorey[]
   materials: CritiqueMaterial[]
+  /**
+   * Envelope systems that exist, by name, so a suggestion to re-clad names one
+   * the controls can actually apply. Names only and no figures at all: the
+   * guard checks numbers, and a per-m2 rate in here would become a number the
+   * model was licensed to quote without the student ever seeing it.
+   */
+  facadeNames: string[]
   warnings: string[]
 }
 

@@ -34,3 +34,10 @@ export {
   SHARE_FRAGMENT_KEY,
   shareUrl,
 } from './share.ts'
+export { createSupabaseDesignLibrary, DESIGNS_TABLE } from './supabase.ts'
+export {
+  ensureAnonymousSession,
+  getSupabaseClient,
+  supabaseConfig,
+  type SupabaseConfig,
+} from './supabaseClient.ts'

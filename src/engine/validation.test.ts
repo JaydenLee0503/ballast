@@ -11,6 +11,7 @@ const storey = (overrides: Partial<Storey> = {}): Storey => ({
   widthY_m: 12,
   materialId: 'reinforced-concrete',
   lateralSystem: 'shear-wall',
+  facade: 'exposed',
   ...overrides,
 })
 

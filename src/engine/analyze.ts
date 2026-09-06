@@ -23,6 +23,7 @@ import type {
 import {
   BUILDABLE_SYSTEMS,
   DRIFT_LIMIT_RATIO,
+  FACADE,
   KZ_HEIGHTS_M,
   RIGID_BUILDING_STOREY_LIMIT,
   STRUCTURAL_FRACTION,
@@ -36,7 +37,7 @@ import {
   storeyWindLoad,
 } from './wind.ts'
 import { storeyDrift } from './drift.ts'
-import { storeyQuantities } from './sustainability.ts'
+import { facadeQuantities, storeyQuantities } from './sustainability.ts'
 import {
   effectiveSectionModulus_m3,
   frictionResistance_kN,
@@ -172,6 +173,9 @@ function analyzeWind(
     if (material === undefined) throw new Error('material index mismatch')
     return storeyQuantities(storey, material)
   })
+  // Kept separate from the frame take-off all the way to the result, so the
+  // per-storey split stays reportable rather than inferable.
+  const envelopes = structure.storeys.map(facadeQuantities)
 
   // --- Cumulative shear and moment, accumulated top-down ------------------
   const n = structure.storeys.length
@@ -200,11 +204,13 @@ function analyzeWind(
     const load = loads[i]
     const material = materials[i]
     const qty = quantities[i]
+    const envelope = envelopes[i]
     const shear = storeyShear_kN[i]
     const moment = momentAboveBase_kNm[i]
     if (
       g === undefined || load === undefined || material === undefined ||
-      qty === undefined || shear === undefined || moment === undefined
+      qty === undefined || envelope === undefined ||
+      shear === undefined || moment === undefined
     ) {
       throw new Error('index mismatch assembling storey results')
     }
@@ -234,9 +240,16 @@ function analyzeWind(
       lateralForce_kN: load.lateralForce_kN,
       storeyShear_kN: shear,
       materialVolume_m3: qty.materialVolume_m3,
-      selfWeight_kN: qty.selfWeight_kN,
-      embodiedCarbon_kgCO2e: qty.embodiedCarbon_kgCO2e,
-      cost_usd: qty.cost_usd,
+      // Frame plus envelope. The envelope's share follows, so nothing here
+      // has to be taken on trust.
+      selfWeight_kN: qty.selfWeight_kN + envelope.selfWeight_kN,
+      embodiedCarbon_kgCO2e:
+        qty.embodiedCarbon_kgCO2e + envelope.embodiedCarbon_kgCO2e,
+      cost_usd: qty.cost_usd + envelope.cost_usd,
+      facadeArea_m2: envelope.facadeArea_m2,
+      facadeCarbon_kgCO2e: envelope.embodiedCarbon_kgCO2e,
+      facadeCost_usd: envelope.cost_usd,
+      facadeWeight_kN: envelope.selfWeight_kN,
       stiffness_kN_per_m: drift.stiffness_kN_per_m,
       drift_m: drift.drift_m,
       driftRatio: drift.driftRatio,
@@ -318,6 +331,30 @@ function analyzeWind(
     warnings.push(
       'Cost uses indicative per-m^3 rates, not a quantity-surveyed estimate. ' +
         'Treat cost comparisons as order-of-magnitude only.',
+    )
+  }
+
+  if (structure.storeys.some((storey) => storey.facade !== 'exposed')) {
+    warnings.push(
+      'Facade carbon, cost and weight use assembly-level archetype rates, ' +
+        'not a specific product or EPD. A 3x difference between two facades ' +
+        'is real; a 10% difference is noise.',
+    )
+  }
+
+  // The envelope is modelled as a dead load hung on the frame: it changes
+  // weight, and through weight overturning and sliding, but it carries no
+  // lateral load and so cannot change drift. Said out loud because a student
+  // who has just glazed a whole tower will reasonably expect it to sway more.
+  if (
+    structure.storeys.some(
+      (storey) => FACADE[storey.facade].windowToWallRatio > 0,
+    )
+  ) {
+    warnings.push(
+      'Windows are non-structural here. Glazing changes weight, and through ' +
+        'it overturning and sliding, but the lateral system is modelled as a ' +
+        'core or frame, so openings do not change stiffness or drift.',
     )
   }
 
