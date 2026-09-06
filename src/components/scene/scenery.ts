@@ -84,7 +84,17 @@ export interface Neighbour {
   readonly widthZ_m: number
   readonly height_m: number
   readonly color: string
+  /**
+   * False for a blank elevation — a warehouse, a depot, a party wall. Not
+   * every building in a city has windows, and a street where all of them do
+   * reads as wallpaper. Drawn by a different material entirely (see
+   * `World.tsx`), so a blank wall costs no window shader at all.
+   */
+  readonly glazed: boolean
 }
+
+/** A neighbour before it has been told whether it is glazed. */
+type NeighbourLot = Omit<Neighbour, 'glazed'>
 
 export type TreeKind = 'broadleaf' | 'conifer'
 
@@ -144,7 +154,7 @@ const LOTS_PER_EDGE = 3
 
 const random = mulberry32(0x8a11a57)
 
-const neighbours: Neighbour[] = []
+const lots: NeighbourLot[] = []
 const trees: Tree[] = []
 const cars: Car[] = []
 
@@ -180,7 +190,7 @@ for (const block of blockCentres) {
         const tall = random() < 0.12
         const raw = tall ? lerp(28, 62, random()) : lerp(7, 27, random())
 
-        neighbours.push({
+        lots.push({
           x: lotX + (random() * 2 - 1) * slackX * 0.6,
           z: lotZ + (random() * 2 - 1) * slackZ * 0.6,
           widthX_m,
@@ -285,9 +295,143 @@ export const SIDEWALK_SLABS: readonly SidewalkSlab[] = blockCentres.flatMap(
   },
 )
 
+/**
+ * Which neighbours have windows.
+ *
+ * Drawn from its own generator rather than from the one above, so that adding
+ * this decision left the streets exactly where they already were. Sharing the
+ * stream would have shifted every subsequent draw and silently rebuilt the
+ * whole city — a thing that should not happen because somebody added a
+ * boolean.
+ *
+ * Tall buildings are nearly always glazed and squat ones often are not, which
+ * is what a real block looks like: offices and flats have windows, the depot
+ * and the substation next to them do not.
+ */
+const BLANK_ODDS_SQUAT = 0.34
+const BLANK_ODDS_TALL = 0.08
+const TALL_ENOUGH_M = 20
+
+const glazeRandom = mulberry32(0x2b1f09)
+const neighbours: Neighbour[] = lots.map((lot) => ({
+  ...lot,
+  glazed:
+    glazeRandom() >=
+    (lot.height_m >= TALL_ENOUGH_M ? BLANK_ODDS_TALL : BLANK_ODDS_SQUAT),
+}))
+
 export const NEIGHBOURS: readonly Neighbour[] = neighbours
+export const GLAZED_NEIGHBOURS: readonly Neighbour[] = neighbours.filter(
+  (building) => building.glazed,
+)
+export const BLANK_NEIGHBOURS: readonly Neighbour[] = neighbours.filter(
+  (building) => !building.glazed,
+)
 export const TREES: readonly Tree[] = trees
 export const CARS: readonly Car[] = cars
+
+/**
+ * People, walking.
+ *
+ * The one thing in the scenery that moves. Everything else here is frozen on
+ * purpose — a neighbourhood that rearranged itself while a student dragged a
+ * slider would look like output — but a *still* city reads as a model of a
+ * city, and the point of the diorama is that the tower is going up somewhere
+ * people actually are. Walkers are the cheapest way to say that, and they say
+ * nothing at all about the engine: no walker reads an `AnalysisResult`, and
+ * the crowd is identical whatever the structure does.
+ *
+ * They walk the pavements rather than the carriageway, which is both what
+ * people do and what keeps them out of the parked cars.
+ */
+
+/** Pavement centreline, measured out from a road centreline. */
+export const PAVEMENT_OFFSET_M = ROAD_HALF_M + SIDEWALK_M / 2
+/** Top of the kerb. Walkers stand on it, not in the road. */
+export const PAVEMENT_TOP_M = 0.18
+/**
+ * Walkers only on the streets a student can see from the plot — the same
+ * reach as the parked traffic above, so the two populate the same streets
+ * rather than each stopping at its own arbitrary edge.
+ */
+const WALK_RANGE_M = CAR_STREET_LIMIT_M
+/**
+ * One full loop. A walker who leaves one end of the street re-enters at the
+ * other, so the crowd never thins out and never has to be respawned.
+ */
+export const WALK_SPAN_M = 2 * WALK_RANGE_M
+const WALKERS_PER_PAVEMENT = 4
+
+/**
+ * Clothing. Muted for the same reason the facades are: the only saturated
+ * colours in the frame should be the ones that carry engine meaning.
+ */
+const COAT_COLORS = [
+  '#5b6470',
+  '#7a6a5d',
+  '#4a5560',
+  '#8a7f74',
+  '#63705f',
+  '#6d6472',
+  '#96897c',
+] as const
+
+export interface Pedestrian {
+  /** 0: walks along X. 1: walks along Z. */
+  readonly axis: 0 | 1
+  /** The fixed coordinate — which pavement they are on. */
+  readonly across_m: number
+  /** Where along the street they start. */
+  readonly start_m: number
+  readonly direction: 1 | -1
+  readonly speed_m_s: number
+  readonly scale: number
+  readonly coat: string
+  /** Radians. Stops the whole crowd bobbing in step. */
+  readonly phase: number
+}
+
+const pedestrians: Pedestrian[] = []
+const walkRandom = mulberry32(0x77c1e3)
+
+for (const centre of ROAD_CENTRES_M) {
+  if (Math.abs(centre) > WALK_RANGE_M) continue
+  for (let axis = 0; axis < 2; axis += 1) {
+    for (const side of [-1, 1] as const) {
+      for (let n = 0; n < WALKERS_PER_PAVEMENT; n += 1) {
+        pedestrians.push({
+          axis: axis === 0 ? 0 : 1,
+          across_m: centre + side * PAVEMENT_OFFSET_M,
+          start_m: (walkRandom() * 2 - 1) * WALK_RANGE_M,
+          direction: walkRandom() < 0.5 ? -1 : 1,
+          // Ordinary walking pace, 4-6 km/h.
+          speed_m_s: lerp(1.1, 1.7, walkRandom()),
+          scale: lerp(0.92, 1.08, walkRandom()),
+          coat: pick(COAT_COLORS, walkRandom()),
+          phase: walkRandom() * Math.PI * 2,
+        })
+      }
+    }
+  }
+}
+
+export const PEDESTRIANS: readonly Pedestrian[] = pedestrians
+
+/**
+ * How far along their street a walker is at `seconds`, wrapped into
+ * `[-WALK_SPAN_M / 2, +WALK_SPAN_M / 2)`.
+ *
+ * Pure, and separated from the rendering, because the wrap is the only part
+ * with an edge worth testing: the doubled modulo is there because JavaScript's
+ * `%` keeps the sign of the dividend, so a walker heading in the negative
+ * direction would otherwise be handed a negative position and pop to the far
+ * end of the street a frame early.
+ */
+export function walkOffset_m(walker: Pedestrian, seconds: number): number {
+  const travelled = walker.start_m + walker.direction * walker.speed_m_s * seconds
+  const half = WALK_SPAN_M / 2
+  return (((travelled + half) % WALK_SPAN_M) + WALK_SPAN_M) % WALK_SPAN_M - half
+}
 
 /**
  * Dashed centrelines. Generated rather than drawn as a texture, because the

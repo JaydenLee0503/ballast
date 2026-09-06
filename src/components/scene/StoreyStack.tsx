@@ -25,13 +25,26 @@
  * rather than a colour of their own, so a red storey with a lot of glass is
  * still unmistakably a red storey — the safety readout is not something the
  * facade control gets to interfere with.
+ *
+ * The material shows itself the same way, and for the same reason: as a
+ * finish, never as a hue. A steel storey is glossier and set out in vertical
+ * bays, a rammed-earth one is dead matte and lifts in horizontal courses, and
+ * both are still exactly the green, amber or red their utilisation earned.
+ * See `lib/materialLook.ts`.
  */
 
 import { useEffect, useMemo, type RefObject } from 'react'
 import { Edges } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
-import { FACADE, type Storey, type StoreyResult, type Structure } from '@/engine'
+import {
+  FACADE,
+  MATERIAL_LIBRARY,
+  type Storey,
+  type StoreyResult,
+  type Structure,
+} from '@/engine'
 import { BAND_HEX, utilizationBand } from '@/lib/palette.ts'
+import { materialLook } from '@/lib/materialLook.ts'
 import { createWindowedMaterial } from './windows.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
@@ -91,6 +104,13 @@ function StoreyBox({
 
   const band = utilizationBand(result.utilization)
   const colour = BAND_HEX[band]
+  // A `get` rather than the engine's throwing `getMaterial`: by the time a
+  // storey reaches the viewport `analyze` has already rejected an unknown
+  // material, so this cannot normally miss — and if it somehow does, an
+  // unadorned wall is a better failure than a black canvas. The default
+  // uSurface of -1 draws no set-out at all, so nothing is invented here.
+  const entry = MATERIAL_LIBRARY.get(storey.materialId)
+  const look = entry ? materialLook(entry.structuralClass) : null
   const boxHeight = Math.max(0.1, storey.height_m - STOREY_GAP_M)
   const windowToWallRatio = FACADE[storey.facade].windowToWallRatio
 
@@ -99,6 +119,10 @@ function StoreyBox({
     // a storey never looks like having picked it.
     windowed.setAppearance(colour, selected ? 0.45 : hovered ? 0.22 : 0.05)
   }, [windowed, colour, selected, hovered])
+
+  useEffect(() => {
+    if (look) windowed.setFinish(look)
+  }, [windowed, look])
 
   useEffect(() => {
     windowed.setWindowToWallRatio(windowToWallRatio)

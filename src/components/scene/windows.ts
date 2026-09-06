@@ -33,6 +33,7 @@
  */
 
 import { MeshStandardMaterial, type MeshStandardMaterialParameters } from 'three'
+import { SURFACE_CODE, type SurfacePattern } from '@/lib/materialLook.ts'
 
 export interface WindowPatternOptions {
   /**
@@ -62,6 +63,16 @@ export interface WindowedMaterial {
   setAppearance: (color: string, emissiveIntensity: number) => void
   /** Size of the box, for the non-instanced case. Metres. */
   setSize: (x: number, y: number, z: number) => void
+  /**
+   * The material's finish: sheen, and the set-out drawn across the wall. See
+   * `lib/materialLook.ts` for why this is deliberately not a colour.
+   */
+  setFinish: (finish: {
+    roughness: number
+    metalness: number
+    surface: SurfacePattern
+    relief: number
+  }) => void
   dispose: () => void
 }
 
@@ -76,6 +87,8 @@ const FRAGMENT_COMMON = /* glsl */ `
   uniform float uNight;
   uniform float uLitFraction;
   uniform vec2 uBay;
+  uniform float uSurface;
+  uniform float uRelief;
   varying vec3 vWinPos;
   varying vec3 vWinNormal;
   varying vec3 vWinSize;
@@ -85,6 +98,40 @@ const FRAGMENT_COMMON = /* glsl */ `
     vec2 p = fract(bay * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
+  }
+
+  // Distance to the nearest gridline, widened by the pixel's own footprint.
+  // Without the fwidth term a 0.26 m brick course on a block 300 m away is
+  // finer than a pixel and turns into moire; with it, the coursing simply
+  // fades out at the distance it would stop being visible anyway.
+  float winRule(float coord, float pitch, float width) {
+    float d = abs(fract(coord / pitch + 0.5) - 0.5) * pitch;
+    return 1.0 - smoothstep(0.0, max(width, fwidth(coord) * 0.9), d);
+  }
+
+  // The set-out for one wall, in metres across the face. Pitches are real
+  // building dimensions -- a 0.26 m brick bed, a 3 m cast panel -- so the
+  // pattern scales with the building rather than with the screen.
+  float winSurfacePattern(vec2 wall) {
+    if (uSurface < 0.5) {
+      return max(winRule(wall.x, 3.0, 0.02), winRule(wall.y, 3.0, 0.02));
+    } else if (uSurface < 1.5) {
+      return winRule(wall.x, 1.6, 0.03);
+    } else if (uSurface < 2.5) {
+      return winRule(wall.x, 0.28, 0.008);
+    } else if (uSurface < 3.5) {
+      return winRule(wall.x, 0.16, 0.01);
+    } else if (uSurface < 4.5) {
+      return winRule(wall.y, 0.45, 0.022);
+    } else if (uSurface < 5.5) {
+      float row = floor(wall.y / 0.26);
+      float stagger = mod(row, 2.0) * 0.24;
+      return max(
+        winRule(wall.y, 0.26, 0.012),
+        winRule(wall.x + stagger, 0.48, 0.01)
+      );
+    }
+    return winRule(wall.x, 0.34, 0.014);
   }
 `
 
@@ -103,6 +150,11 @@ export function createWindowedMaterial(
     uLitFraction: { value: options.litFraction },
     uBay: { value: [options.bayWidth_m, options.bayHeight_m] as [number, number] },
     uSize: { value: [1, 1, 1] as [number, number, number] },
+    // -1 until a finish is set, which the shader reads as "draw no set-out".
+    // A default of 0 would silently give every unfinished wall cast-concrete
+    // panel joints, which is a lie that looks like a decision.
+    uSurface: { value: -1 },
+    uRelief: { value: 0 },
   }
 
   const material = new MeshStandardMaterial(parameters)
@@ -113,6 +165,8 @@ export function createWindowedMaterial(
     shader.uniforms['uLitFraction'] = uniforms.uLitFraction
     shader.uniforms['uBay'] = uniforms.uBay
     shader.uniforms['uSize'] = uniforms.uSize
+    shader.uniforms['uSurface'] = uniforms.uSurface
+    shader.uniforms['uRelief'] = uniforms.uRelief
 
     // Where the box's real size comes from is the only difference between the
     // two callers: an instanced unit box carries it in its matrix, a sized
@@ -145,10 +199,11 @@ export function createWindowedMaterial(
         `#include <map_fragment>
          float winPane = 0.0;
          float winLit = 0.0;
+         float winSurf = 0.0;
          {
            vec3 winFace = abs(vWinNormal);
-           // Roofs and soffits get no windows.
-           if (winFace.y < 0.5 && uWindowRatio > 0.001) {
+           // Roofs and soffits get neither windows nor a wall set-out.
+           if (winFace.y < 0.5) {
              // Which two of the box's dimensions this face spans, and where
              // on it we are. Both run -size/2 .. +size/2.
              vec2 winFaceSize = winFace.x > 0.5
@@ -156,20 +211,30 @@ export function createWindowedMaterial(
                : vec2(vWinSize.x, vWinSize.y);
              vec2 winWall = winFace.x > 0.5 ? vWinPos.zy : vWinPos.xy;
 
-             // Whole bays, edge to edge, on this face specifically.
-             vec2 winCount = max(vec2(1.0), floor(winFaceSize / uBay + 0.5));
-             vec2 winGrid = (winWall + winFaceSize * 0.5) / (winFaceSize / winCount);
-             vec2 winBay = floor(winGrid);
+             // The set-out is a property of the wall, not of its glazing, so
+             // it is drawn on a blank elevation too.
+             if (uRelief > 0.001) winSurf = winSurfacePattern(winWall);
 
-             // Half-width of the pane within its bay. sqrt, so that the AREA
-             // it covers is uWindowRatio.
-             float winHalf = 0.5 * sqrt(clamp(uWindowRatio, 0.0, 1.0));
-             vec2 winOffset = abs(fract(winGrid) - 0.5);
-             winPane = step(winOffset.x, winHalf) * step(winOffset.y, winHalf);
-             winLit = step(winHash(winBay), uLitFraction);
+             if (uWindowRatio > 0.001) {
+               // Whole bays, edge to edge, on this face specifically.
+               vec2 winCount = max(vec2(1.0), floor(winFaceSize / uBay + 0.5));
+               vec2 winGrid = (winWall + winFaceSize * 0.5) / (winFaceSize / winCount);
+               vec2 winBay = floor(winGrid);
+
+               // Half-width of the pane within its bay. sqrt, so that the AREA
+               // it covers is uWindowRatio.
+               float winHalf = 0.5 * sqrt(clamp(uWindowRatio, 0.0, 1.0));
+               vec2 winOffset = abs(fract(winGrid) - 0.5);
+               winPane = step(winOffset.x, winHalf) * step(winOffset.y, winHalf);
+               winLit = step(winHash(winBay), uLitFraction);
+             }
            }
          }
-         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * ${GLASS_TINT}, winPane);`,
+         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * ${GLASS_TINT}, winPane);
+         // Joints darken the solid wall only: a pane is glass, and glass has
+         // no coursing. Multiplying keeps this a shading of whatever colour
+         // the storey already is, so the utilisation band survives intact.
+         diffuseColor.rgb *= 1.0 - uRelief * winSurf * (1.0 - winPane);`,
       )
       .replace(
         '#include <emissivemap_fragment>',
@@ -196,6 +261,12 @@ export function createWindowedMaterial(
       uniforms.uSize.value[0] = x
       uniforms.uSize.value[1] = y
       uniforms.uSize.value[2] = z
+    },
+    setFinish({ roughness, metalness, surface, relief }) {
+      material.roughness = roughness
+      material.metalness = metalness
+      uniforms.uSurface.value = SURFACE_CODE[surface]
+      uniforms.uRelief.value = relief
     },
     dispose() {
       material.dispose()

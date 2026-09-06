@@ -28,7 +28,7 @@
  */
 
 import { memo, useMemo, useRef, type RefObject } from 'react'
-import { Instance, Instances } from '@react-three/drei'
+import { Instance, Instances, type PositionMesh } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import {
   AdditiveBlending,
@@ -48,11 +48,14 @@ import {
 import { skyPalette, sunDirection } from '@/lib/sky.ts'
 import { createWindowedMaterial, type WindowedMaterial } from './windows.ts'
 import {
+  BLANK_NEIGHBOURS,
   CARS,
   DASHES,
   DASH_LENGTH_M,
+  GLAZED_NEIGHBOURS,
   GROUND_EXTENT_M,
-  NEIGHBOURS,
+  PAVEMENT_TOP_M,
+  PEDESTRIANS,
   ROAD_CENTRES_M,
   ROAD_HALF_M,
   ROAD_LENGTH_M,
@@ -60,6 +63,7 @@ import {
   SITE_PAD_HALF_M,
   STAR_DIRECTIONS,
   TREES,
+  walkOffset_m,
 } from './scenery.ts'
 
 /** Radius of the sky dome. Must exceed OrbitControls' `maxDistance`. */
@@ -130,6 +134,24 @@ const NEIGHBOUR_BAY_WIDTH_M = 3.2
 const NEIGHBOUR_BAY_HEIGHT_M = 3.5
 /** Fewer lights on than the student's own tower; it is late and this is a city. */
 const NEIGHBOUR_LIT_FRACTION = 0.4
+/**
+ * Blank elevations get a plain material and no window shader at all. Rougher
+ * than the glazed stock, because what this is standing in for — a warehouse
+ * flank, a party wall, a depot — is render or blockwork rather than a curtain
+ * wall.
+ */
+const BLANK_FACADE_ROUGHNESS = 0.95
+
+/** Walkers. Roughly adult proportions at the scale the city is drawn. */
+const WALKER_BODY_RADIUS_M = 0.19
+const WALKER_BODY_LENGTH_M = 0.82
+const WALKER_HEAD_RADIUS_M = 0.15
+/** Centre height of the body capsule above the kerb. */
+const WALKER_BODY_Y_M = 0.6
+const WALKER_HEAD_Y_M = 1.16
+/** Amplitude of the walk bob. Small: this is gait, not bouncing. */
+const WALKER_BOB_M = 0.035
+const WALKER_SKIN_HEX = '#c8a68c'
 
 /**
  * The neighbourhood's facades. The same window shader the student's building
@@ -298,15 +320,41 @@ const City = memo(function City({
 
   return (
     <group>
+      {/* Glazed stock: the window shader, shared with the student's tower. */}
       <Instances
-        limit={NEIGHBOURS.length}
+        limit={Math.max(1, GLAZED_NEIGHBOURS.length)}
         frames={4}
         material={facadeMaterial}
         castShadow
         receiveShadow
       >
         <boxGeometry args={[1, 1, 1]} />
-        {NEIGHBOURS.map((building, index) => (
+        {GLAZED_NEIGHBOURS.map((building, index) => (
+          <Instance
+            key={index}
+            position={[building.x, building.height_m / 2, building.z]}
+            scale={[building.widthX_m, building.height_m, building.widthZ_m]}
+            color={building.color}
+          />
+        ))}
+      </Instances>
+
+      {/* Blank elevations. A separate draw with a plain material rather than
+          the same one at zero glazing: a windowless wall should not be paying
+          for a window shader, and this way it also keeps its own roughness. */}
+      <Instances
+        limit={Math.max(1, BLANK_NEIGHBOURS.length)}
+        frames={4}
+        castShadow
+        receiveShadow
+      >
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial
+          color="#ffffff"
+          roughness={BLANK_FACADE_ROUGHNESS}
+          metalness={0}
+        />
+        {BLANK_NEIGHBOURS.map((building, index) => (
           <Instance
             key={index}
             position={[building.x, building.height_m / 2, building.z]}
@@ -374,6 +422,101 @@ const City = memo(function City({
             key={index}
             position={[car.x, 1.55, car.z]}
             rotation={[0, car.rotationY, 0]}
+          />
+        ))}
+      </Instances>
+    </group>
+  )
+})
+
+/**
+ * The crowd.
+ *
+ * The only thing in the scenery that moves, and the exception is deliberate:
+ * everything else is frozen because a neighbourhood that rearranged itself
+ * under a slider would look like output, but a wholly still city reads as a
+ * *model* of a city. People walking are the cheapest way to say that the tower
+ * is going up somewhere real.
+ *
+ * They are still scenery, and obey the same rule as the rest of it: no walker
+ * reads an `AnalysisResult` and none feeds one. The crowd is identical whether
+ * the design stands or falls over — only the clock moves it.
+ *
+ * Positions are written straight onto the instances in `useFrame` rather than
+ * held in React state, for the obvious reason: sixty-four walkers at sixty
+ * hertz is not something to re-render a component tree for.
+ */
+const Pedestrians = memo(function Pedestrians() {
+  const bodies = useRef<(PositionMesh | null)[]>([])
+  const heads = useRef<(PositionMesh | null)[]>([])
+
+  useFrame((state) => {
+    const seconds = state.clock.elapsedTime
+    for (let index = 0; index < PEDESTRIANS.length; index += 1) {
+      const walker = PEDESTRIANS[index]
+      const body = bodies.current[index]
+      const head = heads.current[index]
+      if (walker === undefined || !body || !head) continue
+
+      const along = walkOffset_m(walker, seconds)
+      // `abs(sin)` rather than `sin`: a gait rises twice per stride, once on
+      // each foot, and the doubled frequency is what stops it reading as a
+      // float up and down.
+      const bob =
+        Math.abs(Math.sin(seconds * walker.speed_m_s * 2.6 + walker.phase)) *
+        WALKER_BOB_M *
+        walker.scale
+      const base = PAVEMENT_TOP_M + bob
+
+      const x = walker.axis === 0 ? along : walker.across_m
+      const z = walker.axis === 0 ? walker.across_m : along
+
+      body.position.set(x, base + WALKER_BODY_Y_M * walker.scale, z)
+      head.position.set(x, base + WALKER_HEAD_Y_M * walker.scale, z)
+    }
+  })
+
+  return (
+    <group>
+      {/* `frustumCulled={false}` on both: an InstancedMesh's bounding volume
+          is computed from the matrices it had when it was built, and these
+          move, so the whole crowd would vanish as soon as that stale box left
+          the view. */}
+      <Instances
+        limit={Math.max(1, PEDESTRIANS.length)}
+        frustumCulled={false}
+        castShadow
+      >
+        <capsuleGeometry
+          args={[WALKER_BODY_RADIUS_M, WALKER_BODY_LENGTH_M, 4, 8]}
+        />
+        <meshStandardMaterial color="#ffffff" roughness={0.85} />
+        {PEDESTRIANS.map((walker, index) => (
+          <Instance
+            key={index}
+            ref={(instance: PositionMesh | null) => {
+              bodies.current[index] = instance
+            }}
+            scale={walker.scale}
+            color={walker.coat}
+          />
+        ))}
+      </Instances>
+
+      <Instances
+        limit={Math.max(1, PEDESTRIANS.length)}
+        frustumCulled={false}
+        castShadow
+      >
+        <sphereGeometry args={[WALKER_HEAD_RADIUS_M, 8, 6]} />
+        <meshStandardMaterial color={WALKER_SKIN_HEX} roughness={0.9} />
+        {PEDESTRIANS.map((walker, index) => (
+          <Instance
+            key={index}
+            ref={(instance: PositionMesh | null) => {
+              heads.current[index] = instance
+            }}
+            scale={walker.scale}
           />
         ))}
       </Instances>
@@ -540,6 +683,7 @@ export function World({ night, onGroundClick }: WorldProps) {
 
       <Ground onGroundClick={onGroundClick} />
       <City facadeMaterial={facade.material} />
+      <Pedestrians />
     </>
   )
 }
