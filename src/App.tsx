@@ -33,11 +33,15 @@ import { SavedDesigns } from '@/components/SavedDesigns.tsx'
 import { ScorePanel } from '@/components/ScorePanel.tsx'
 import { StoreyTable } from '@/components/StoreyTable.tsx'
 import { Viewport } from '@/components/Viewport.tsx'
+import { Bo } from '@/components/tutorial/Bo.tsx'
+import { TutorialTour } from '@/components/tutorial/TutorialTour.tsx'
 import { useDesignStore } from '@/store/design.ts'
 import { useAnalysis } from '@/store/useAnalysis.ts'
 import { useAppView } from '@/store/useAppView.ts'
 import { useComparison } from '@/store/useComparison.ts'
 import { sharedDesignOutcome } from '@/store/sharedDesign.ts'
+import { useTutorialStore } from '@/store/useTutorial.ts'
+import { stepAt } from '@/lib/tutorial.ts'
 
 /**
  * The panel's tabs, in the order a session actually goes: build the thing,
@@ -82,7 +86,25 @@ export default function App() {
   const selectStorey = useDesignStore((state) => state.selectStorey)
   const pinBaseline = useDesignStore((state) => state.pinBaseline)
   const resetBaseline = useDesignStore((state) => state.resetBaseline)
+  const startTutorial = useTutorialStore((state) => state.start)
+  // `stepAt` hands back the same object from the module's own array, so this
+  // selector is referentially stable and does not re-render on every store
+  // touch the way a freshly built object would.
+  const tutorialStep = useTutorialStore((state) =>
+    state.stepIndex === null ? null : stepAt(state.stepIndex),
+  )
   const { result, error } = useAnalysis()
+
+  // A tour step can only ring a control that is rendered, and half of them
+  // live under Basics. Without this, somebody who hits "Show me around" from
+  // the Critique tab is walked through three steps pointing at nothing.
+  //
+  // An override derived during render, not a write into `tab`. Two things
+  // follow, and both are better than the effect this replaces: there is no
+  // extra render to show the right tab, and closing the tour puts the student
+  // back on the tab *they* had open rather than wherever Bo finished. The tour
+  // borrows the panel; it does not get to keep it.
+  const activeTab: RailTab = tutorialStep?.tab ?? tab
   const { comparison, baselineLabel, isBaseline } = useComparison(result, structure)
 
   // After every hook, never inside a branch: the studio's hooks keep running
@@ -119,10 +141,20 @@ export default function App() {
 
         <button
           type="button"
+          onClick={startTutorial}
+          title="Bo will show you around"
+          className="ml-auto flex items-center gap-1.5 rounded-full border-2 border-ink bg-white py-1 pl-1.5 pr-3 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+        >
+          <Bo mood="wave" size={18} />
+          Show me around
+        </button>
+
+        <button
+          type="button"
           onClick={() => setPanelOpen((open) => !open)}
           aria-expanded={panelOpen}
           aria-controls="studio-panel"
-          className="ml-auto rounded-full border-2 border-ink bg-white px-3 py-1 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+          className="rounded-full border-2 border-ink bg-white px-3 py-1 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
         >
           <span aria-hidden="true" className="mr-1.5 inline-block">
             {panelOpen ? '›' : '‹'}
@@ -172,6 +204,7 @@ export default function App() {
           >
             <div className="flex h-full flex-col border-ink/12 max-lg:border-t-2 lg:w-96 lg:border-l-2">
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                <div data-tour="score">
                 <ScorePanel
                   result={result}
                   structure={structure}
@@ -181,8 +214,9 @@ export default function App() {
                   onPinBaseline={pinBaseline}
                   onResetBaseline={resetBaseline}
                 />
+                </div>
 
-                <section>
+                <section data-tour="storeys">
                   <Eyebrow>PER STOREY</Eyebrow>
                   <StoreyTable
                     result={result}
@@ -195,14 +229,17 @@ export default function App() {
                     they are the numbers, and they should never be a tab away.
                     Only the things you act on -- controls, critique -- share
                     space. */}
-                <nav className="flex gap-0.5 rounded-full border-2 border-ink/12 bg-white p-1">
+                <nav
+                  data-tour="tabs"
+                  className="flex gap-0.5 rounded-full border-2 border-ink/12 bg-white p-1"
+                >
                   {RAIL_TABS.map(({ id, label }) => (
                     <button
                       key={id}
                       type="button"
                       onClick={() => setTab(id)}
                       className={`flex-1 rounded-full px-1.5 py-1.5 font-display text-[0.7rem] transition-colors ${
-                        tab === id
+                        activeTab === id
                           ? 'bg-ink text-paper'
                           : 'text-ink/55 hover:bg-ink/5 hover:text-ink'
                       }`}
@@ -212,12 +249,12 @@ export default function App() {
                   ))}
                 </nav>
 
-                {tab === 'basics' && <BasicControls />}
-                {tab === 'advanced' && <AdvancedControls />}
-                {tab === 'saved' && (
+                {activeTab === 'basics' && <BasicControls />}
+                {activeTab === 'advanced' && <AdvancedControls />}
+                {activeTab === 'saved' && (
                   <SavedDesigns structure={structure} hazard={hazard} />
                 )}
-                {tab === 'critique' && (
+                {activeTab === 'critique' && (
                   <CritiquePanel
                     result={result}
                     structure={structure}
@@ -229,7 +266,7 @@ export default function App() {
                     They are the limits of the model the student is reading
                     numbers off, and "you are past where this is accurate" is
                     exactly the sentence a beginner most needs. */}
-                {(tab === 'basics' || tab === 'advanced') &&
+                {(activeTab === 'basics' || activeTab === 'advanced') &&
                   result.warnings.length > 0 && (
                     <section className="slab border-caution-ink/25 bg-caution/10 p-3">
                       <Eyebrow>MODELLING CAVEATS</Eyebrow>
@@ -245,6 +282,10 @@ export default function App() {
           </aside>
         </main>
       )}
+
+      {/* Last in the tree and fixed-positioned, so it sits over the studio
+          without being inside either pane's overflow. */}
+      <TutorialTour />
     </div>
   )
 }

@@ -141,3 +141,31 @@ input[type="range"]:disabled {
   opacity: 0.45;
   cursor: default;
 }
+
+/* Bo hangs and swings, because that is what a plumb bob does. The pivot is the
+   top of the string, not the middle of the drawing, so he arcs rather than
+   spinning. Slow and shallow on purpose: a mascot bouncing in the corner of a
+   tool somebody is concentrating on is an irritation, not a delight.
+
+   The whole thing is off for anyone who has asked their system to reduce
+   motion — and off means *no transform*, not a faster swing. */
+@keyframes bo-swing {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+
+.bo-hang {
+  transform-origin: 50% 0;
+  animation: bo-swing 4.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bo-hang {
+    animation: none;
+  }
+}

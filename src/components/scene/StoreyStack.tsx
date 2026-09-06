@@ -35,6 +35,7 @@
 
 import { useEffect, useMemo, type RefObject } from 'react'
 import { Edges } from '@react-three/drei'
+import { BufferGeometry, Float32BufferAttribute } from 'three'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import {
   FACADE,
@@ -46,6 +47,7 @@ import {
 import { BAND_HEX, utilizationBand } from '@/lib/palette.ts'
 import { materialLook, wallColor } from '@/lib/materialLook.ts'
 import { roofForm } from '@/lib/typology.ts'
+import { gablePrism, monoPrism } from '@/lib/roofGeometry.ts'
 import { createWindowedMaterial } from './windows.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
@@ -256,16 +258,17 @@ export function FoundationBlock({ structure }: { structure: Structure }) {
  * Neutral, like the foundation block above. Not a palette colour, on purpose.
  */
 const ROOF_HEX = '#4b4a52'
-/** Rise of a hip roof as a fraction of the shorter plan dimension. */
+/** Rise of a gable as a fraction of the span the slope climbs. */
 const PITCH_RATIO = 0.3
 /** However wide the building, a domestic roof does not become a spire. */
 const PITCH_MAX_M = 4.5
-/** Fall across the plan of a shed roof, as a fraction. About 5 degrees. */
+/** Fall of a shed roof across its short span. About 5 degrees. */
 const MONOPITCH_FALL = 0.09
+const MONOPITCH_MAX_M = 3.5
 const PARAPET_HEIGHT_M = 1.05
 const PARAPET_THICKNESS_M = 0.35
-/** Slab thickness for the shed roof, and the parapet's own cap. */
-const ROOF_SLAB_M = 0.3
+/** The deck inside a parapet. Thin: it is a surface, not a storey. */
+const DECK_THICKNESS_M = 0.16
 
 /**
  * The roof, drawn from the design's declared typology.
@@ -277,91 +280,111 @@ const ROOF_SLAB_M = 0.3
  * says "drawn, not analysed" — it is what `FoundationBlock` does, for exactly
  * the same reason.
  *
+ * The parapet gets a deck for that reason too, and not only for looks: without
+ * one you look down into the ring at the top face of the top storey, which is
+ * painted the storey's utilisation colour. A green or red roof reads as a
+ * safety claim about a roof the engine never analysed.
+ *
  * KNOWN GAP, stated rather than buried: a real roof is real carbon and real
  * cost, and this one is neither. Closing that means a roof term in
  * `sustainability.ts` with a cited factor and its own tests — not a number
- * invented in a component. Until then the shape is honest about being only a
- * shape.
+ * invented in a component.
  */
 export function RoofCap({ structure }: { structure: Structure }) {
   const form = roofForm(structure.typology)
   const top = structure.storeys[structure.storeys.length - 1]
+  const widthX_m = top?.widthX_m ?? 0
+  const widthY_m = top?.widthY_m ?? 0
+
+  // Seated on the *drawn* top face, not the nominal one. Each box is drawn
+  // STOREY_GAP_M shorter than its storey and centred, so the stack really
+  // stops half a gap below the sum of the heights. Using the sum floated every
+  // roof 40 mm above its building.
+  const wallTop_m =
+    structure.storeys.reduce((total, storey) => total + storey.height_m, 0) -
+    STOREY_GAP_M / 2
+
+  const prism = useMemo(() => {
+    if (form === 'pitched') {
+      return gablePrism(widthX_m, widthY_m, PITCH_RATIO, PITCH_MAX_M)
+    }
+    if (form === 'monopitch') {
+      return monoPrism(widthX_m, widthY_m, MONOPITCH_FALL, MONOPITCH_MAX_M)
+    }
+    return null
+  }, [form, widthX_m, widthY_m])
+
+  const geometry = useMemo(() => {
+    if (prism === null) return null
+    const built = new BufferGeometry()
+    built.setAttribute(
+      'position',
+      new Float32BufferAttribute(Float32Array.from(prism.positions), 3),
+    )
+    // Per-face normals, so the ridge stays a crease instead of being smoothed
+    // into a dome.
+    built.computeVertexNormals()
+    return built
+  }, [prism])
+
+  // Geometry built by hand is not disposed by r3f when the mesh unmounts.
+  useEffect(() => {
+    if (geometry === null) return
+    return () => geometry.dispose()
+  }, [geometry])
+
   if (form === 'flat' || top === undefined) return null
 
-  const height_m = structure.storeys.reduce(
-    (total, storey) => total + storey.height_m,
-    0,
-  )
-  const { widthX_m, widthY_m } = top
-
-  if (form === 'pitched') {
-    const rise = Math.min(PITCH_MAX_M, PITCH_RATIO * Math.min(widthX_m, widthY_m))
+  if (prism !== null && geometry !== null) {
     return (
       <mesh
         castShadow
         receiveShadow
-        position={[0, height_m + rise / 2, 0]}
-        rotation={[0, Math.PI / 4, 0]}
-        scale={[widthX_m, rise, widthY_m]}
+        geometry={geometry}
+        position={[0, wallTop_m, 0]}
+        rotation={[0, prism.rotationY, 0]}
       >
-        {/* A four-sided cone of radius sqrt(1/2), turned 45 degrees, has its
-            corners at (+/-0.5, +/-0.5) — a unit square. Scaling it by the
-            plan then fits the roof to the walls exactly, at any proportion. */}
-        <coneGeometry args={[Math.SQRT1_2, 1, 4]} />
         <meshStandardMaterial color={ROOF_HEX} roughness={0.9} flatShading />
         <Edges color="#2f2748" />
       </mesh>
     )
   }
 
-  if (form === 'monopitch') {
-    const fall = MONOPITCH_FALL * widthX_m
-    return (
-      <mesh
-        castShadow
-        receiveShadow
-        position={[0, height_m + fall / 2 + ROOF_SLAB_M / 2, 0]}
-        rotation={[0, 0, Math.atan2(fall, widthX_m)]}
-      >
-        {/* Long enough to still cover the plan once tilted. */}
-        <boxGeometry
-          args={[Math.hypot(widthX_m, fall), ROOF_SLAB_M, widthY_m]}
-        />
-        <meshStandardMaterial color={ROOF_HEX} roughness={0.9} />
-        <Edges color="#2f2748" />
-      </mesh>
-    )
-  }
-
-  // Parapet: four upstands round the edge, so the top reads as a flat roof
-  // with a lip rather than as a storey that stopped early.
+  // Parapet: a deck, with four upstands round its edge.
   const halfX = widthX_m / 2 - PARAPET_THICKNESS_M / 2
   const halfY = widthY_m / 2 - PARAPET_THICKNESS_M / 2
-  const walls: Array<{
+  const upstands: Array<{
     position: [number, number, number]
     size: [number, number, number]
   }> = [
     {
-      position: [0, height_m + PARAPET_HEIGHT_M / 2, -halfY],
+      position: [0, wallTop_m + PARAPET_HEIGHT_M / 2, -halfY],
       size: [widthX_m, PARAPET_HEIGHT_M, PARAPET_THICKNESS_M],
     },
     {
-      position: [0, height_m + PARAPET_HEIGHT_M / 2, halfY],
+      position: [0, wallTop_m + PARAPET_HEIGHT_M / 2, halfY],
       size: [widthX_m, PARAPET_HEIGHT_M, PARAPET_THICKNESS_M],
     },
     {
-      position: [-halfX, height_m + PARAPET_HEIGHT_M / 2, 0],
+      position: [-halfX, wallTop_m + PARAPET_HEIGHT_M / 2, 0],
       size: [PARAPET_THICKNESS_M, PARAPET_HEIGHT_M, widthY_m],
     },
     {
-      position: [halfX, height_m + PARAPET_HEIGHT_M / 2, 0],
+      position: [halfX, wallTop_m + PARAPET_HEIGHT_M / 2, 0],
       size: [PARAPET_THICKNESS_M, PARAPET_HEIGHT_M, widthY_m],
     },
   ]
 
   return (
     <group>
-      {walls.map((wall, index) => (
+      <mesh
+        receiveShadow
+        position={[0, wallTop_m + DECK_THICKNESS_M / 2, 0]}
+      >
+        <boxGeometry args={[widthX_m, DECK_THICKNESS_M, widthY_m]} />
+        <meshStandardMaterial color={ROOF_HEX} roughness={0.95} />
+      </mesh>
+      {upstands.map((wall, index) => (
         <mesh key={index} castShadow receiveShadow position={wall.position}>
           <boxGeometry args={wall.size} />
           <meshStandardMaterial color={ROOF_HEX} roughness={0.9} />

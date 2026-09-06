@@ -166,6 +166,7 @@ export function BasicControls() {
 
   return (
     <div className="space-y-4">
+      <div data-tour="typology">
       <Group
         title="Building type"
         hint="A starting point. Every control below still works on it afterwards."
@@ -189,7 +190,9 @@ export function BasicControls() {
           </p>
         ) : null}
       </Group>
+      </div>
 
+      <div data-tour="size">
       <Group title="Your building" hint="How many floors, and how big each one is.">
         <Field label="Storeys" value={String(storeys.length)}>
           <span className="flex gap-1">
@@ -250,6 +253,7 @@ export function BasicControls() {
           strongest — and less building to pay for.
         </p>
       </Group>
+      </div>
 
       <Group
         title="Windows"
@@ -277,6 +281,7 @@ export function BasicControls() {
         </p>
       </Group>
 
+      <div data-tour="wind">
       <Group
         title="The storm"
         hint="A gust, and the direction it blows towards. Wide faces catch more of it."
@@ -304,6 +309,7 @@ export function BasicControls() {
           0° blows along the width, 90° along the depth.
         </p>
       </Group>
+      </div>
 
       <button
         type="button"
