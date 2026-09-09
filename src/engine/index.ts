@@ -20,13 +20,21 @@ export {
   velocityPressure_Pa,
   velocityPressureExposureCoefficient,
   kzFromPowerLaw,
-  projectPlan,
   netForceCoefficient,
+  roundForceCoefficient,
+  forceCoefficient,
   storeyGeometry,
   storeyWindLoad,
   checkRoughnessConsistency,
 } from './wind.ts'
-export { planArea_m2, storeyStiffness_kN_per_m, storeyDrift } from './drift.ts'
+export {
+  planArea_m2,
+  planPerimeter_m,
+  projectPlan,
+  grossSectionModulus_m3,
+  type PlanProjection,
+} from './plan.ts'
+export { storeyStiffness_kN_per_m, storeyDrift } from './drift.ts'
 export {
   compareDesigns,
   metricDelta,

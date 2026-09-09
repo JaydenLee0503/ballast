@@ -3,11 +3,13 @@ import {
   checkRoughnessConsistency,
   kmhToMs,
   kzFromPowerLaw,
+  forceCoefficient,
   netForceCoefficient,
-  projectPlan,
+  roundForceCoefficient,
   velocityPressure_Pa,
   velocityPressureExposureCoefficient,
 } from './wind.ts'
+import { projectPlan } from './plan.ts'
 import { KZ_HEIGHTS_M, KZ_TABLE } from './constants.ts'
 import type { ExposureCategory } from './types.ts'
 
@@ -103,34 +105,34 @@ describe('velocity pressure', () => {
 
 describe('plan projection', () => {
   it('at 0 deg the wind strikes the widthY face and travels through widthX', () => {
-    const p = projectPlan(30, 10, 0)
+    const p = projectPlan(30, 10, 0, 'rectangle')
     expect(p.acrossWindWidth_m).toBeCloseTo(10, 10)
     expect(p.alongWindDepth_m).toBeCloseTo(30, 10)
   })
 
   it('at 90 deg the roles swap', () => {
-    const p = projectPlan(30, 10, 90)
+    const p = projectPlan(30, 10, 90, 'rectangle')
     expect(p.acrossWindWidth_m).toBeCloseTo(30, 10)
     expect(p.alongWindDepth_m).toBeCloseTo(10, 10)
   })
 
   it('at 45 deg both are (a + b)/sqrt(2)', () => {
-    const p = projectPlan(30, 10, 45)
+    const p = projectPlan(30, 10, 45, 'rectangle')
     const expected = 40 / Math.SQRT2
     expect(p.acrossWindWidth_m).toBeCloseTo(expected, 10)
     expect(p.alongWindDepth_m).toBeCloseTo(expected, 10)
   })
 
   it('is symmetric under 180 deg reversal', () => {
-    const a = projectPlan(17, 6, 30)
-    const b = projectPlan(17, 6, 210)
+    const a = projectPlan(17, 6, 30, 'rectangle')
+    const b = projectPlan(17, 6, 210, 'rectangle')
     expect(a.acrossWindWidth_m).toBeCloseTo(b.acrossWindWidth_m, 10)
     expect(a.alongWindDepth_m).toBeCloseTo(b.alongWindDepth_m, 10)
   })
 
   it('leaves a square plan unchanged at every angle', () => {
     for (let deg = 0; deg <= 90; deg += 15) {
-      const p = projectPlan(12, 12, deg)
+      const p = projectPlan(12, 12, deg, 'rectangle')
       // A square's bounding-box projection peaks at 45 deg (12*sqrt(2)).
       expect(p.acrossWindWidth_m).toBeGreaterThanOrEqual(12 - 1e-9)
       expect(p.acrossWindWidth_m).toBeLessThanOrEqual(12 * Math.SQRT2 + 1e-9)
@@ -181,5 +183,40 @@ describe('terrain roughness consistency check', () => {
 
   it('rejects a non-positive roughness length', () => {
     expect(checkRoughnessConsistency('C', 0)).toContain('must be a positive')
+  })
+})
+
+describe('force coefficient for a round plan', () => {
+  it('reads ASCE 7-16 Table 29.4-1 at its tabulated points', () => {
+    // h/D of 1, 7 and 25 -> 0.5, 0.6, 0.7. D is the across-wind width.
+    expect(roundForceCoefficient(20, 20)).toBeCloseTo(0.5, 10)
+    expect(roundForceCoefficient(70, 10)).toBeCloseTo(0.6, 10)
+    expect(roundForceCoefficient(250, 10)).toBeCloseTo(0.7, 10)
+  })
+
+  it('interpolates between them and clamps outside', () => {
+    expect(roundForceCoefficient(40, 10)).toBeGreaterThan(0.5)
+    expect(roundForceCoefficient(40, 10)).toBeLessThan(0.6)
+    // Squatter than the table goes, and far taller than it goes.
+    expect(roundForceCoefficient(5, 40)).toBeCloseTo(0.5, 10)
+    expect(roundForceCoefficient(4000, 10)).toBeCloseTo(0.7, 10)
+  })
+
+  it('never presents a wider face than a square one of the same size', () => {
+    // The teaching claim, at the level of the coefficient: a round building
+    // sheds wind a rectangular one catches. Both clauses are read at the same
+    // plan, so the only difference is the shape.
+    for (const height of [10, 30, 60, 90]) {
+      const round = forceCoefficient('ellipse', 20, 20, height)
+      const box = forceCoefficient('rectangle', 20, 20, height)
+      expect(round).toBeLessThan(box)
+    }
+  })
+
+  it('agrees with Table 29.4-1 that a squat square section is about 1.3', () => {
+    // The two families are different clauses, so this is a consistency check
+    // rather than a derivation: Fig. 27.3-1 built up from Cp gives 1.3 for a
+    // square plan, and Table 29.4-1 tabulates 1.3 for a square section.
+    expect(netForceCoefficient(20, 20)).toBeCloseTo(1.3, 10)
   })
 })

@@ -44,12 +44,13 @@ describe('token length', () => {
     }
     const length = encodeDesign(design('x'.repeat(80), maxStructure)).length
     // Measured at 4060 when written, 4668 after `Storey.facade` landed in
-    // schema 2 — which is exactly what this assertion is for. Pinned with
-    // headroom above the current figure so the next inflation shows up here
-    // first, and re-pinned deliberately rather than relaxed toward the real
-    // limit, which is more than 1.7x away.
+    // schema 2, and 5463 after `Storey.planShape` landed in schema 4 — which is
+    // exactly what this assertion is for. Pinned with headroom above the current
+    // figure so the next inflation shows up here first, and re-pinned
+    // deliberately rather than relaxed toward the real limit, which is still
+    // 1.5x away.
     expect(length).toBeLessThan(MAX_TOKEN_LENGTH)
-    expect(length).toBeLessThan(5000)
+    expect(length).toBeLessThan(6000)
   })
 
   it('refuses an oversized token without trying to decode it', () => {

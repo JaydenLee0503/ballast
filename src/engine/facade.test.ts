@@ -26,6 +26,7 @@ const storey = (facade: FacadeSystem): Storey => ({
   widthY_m: 12,
   materialId: 'reinforced-concrete',
   lateralSystem: 'shear-wall',
+  planShape: 'rectangle',
   facade,
 })
 

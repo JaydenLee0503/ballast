@@ -5,13 +5,14 @@
  * hinge the building would rotate about if the wind pushed it over.
  */
 
-import type { Foundation } from './types.ts'
+import type { Foundation, PlanShape } from './types.ts'
 import {
   FOUNDATION_FRICTION_COEFFICIENT,
   PASSIVE_MOBILISATION_FACTOR,
   PASSIVE_PRESSURE_COEFFICIENT,
   SOIL_UNIT_WEIGHT_KN_M3,
 } from './constants.ts'
+import { grossSectionModulus_m3 } from './plan.ts'
 
 /**
  * Overturning moment: each storey's wind force times its height above the
@@ -101,10 +102,10 @@ export function frictionResistance_kN(totalSelfWeight_kN: number): number {
  * Elastic section modulus of the storey's lateral system about the axis it
  * bends over, reduced by the structural fraction.
  *
- * The plan is idealised as a solid rectangle B wide (across wind) and L deep
- * (along wind) bending about the across-wind axis:
- *   S_gross = B * L^2 / 6
- * and only `structuralFraction` of that plan is real material:
+ * The plan is idealised as a solid section B wide (across wind) and L deep
+ * (along wind) bending about the across-wind axis — B*L^2/6 for a rectangle,
+ * pi*B*L^2/32 for an ellipse, both in `plan.ts` — and only
+ * `structuralFraction` of that plan is real material:
  *   S_eff = fraction * S_gross
  *
  * SIMPLIFICATION: this smears the structural material uniformly across the
@@ -117,9 +118,11 @@ export function effectiveSectionModulus_m3(
   acrossWindWidth_m: number,
   alongWindDepth_m: number,
   structuralFraction: number,
+  planShape: PlanShape,
 ): number {
   return (
-    structuralFraction * ((acrossWindWidth_m * alongWindDepth_m * alongWindDepth_m) / 6)
+    structuralFraction *
+    grossSectionModulus_m3(acrossWindWidth_m, alongWindDepth_m, planShape)
   )
 }
 

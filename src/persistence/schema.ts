@@ -27,12 +27,14 @@ import {
   FACADE_SYSTEMS,
   FOUNDATION_TYPES,
   LATERAL_SYSTEMS,
+  PLAN_SHAPES,
   TYPOLOGIES,
   type ExposureCategory,
   type FacadeSystem,
   type FoundationType,
   type LateralSystem,
   type MaterialLibrary,
+  type PlanShape,
   type Storey,
   type Structure,
   type Typology,
@@ -53,15 +55,16 @@ import {
  * Bump when the shape changes incompatibly.
  *
  * Version 2 added `Storey.facade`. Version 3 added `Structure.typology`.
- * Earlier designs are still readable, and the migrations are the whole reason
- * this file can say "reject, don't repair" with a straight face — see
- * `migrateStoreyFacade` and `migrateTypology` below for why the defaults they
- * pick are the only honest ones.
+ * Version 4 added `Storey.planShape`. Earlier designs are still readable, and
+ * the migrations are the whole reason this file can say "reject, don't repair"
+ * with a straight face — see `migrateStoreyFacade`, `migrateTypology` and
+ * `migratePlanShape` below for why the defaults they pick are the only honest
+ * ones.
  */
-export const DESIGN_SCHEMA_VERSION = 3
+export const DESIGN_SCHEMA_VERSION = 4
 
 /** Versions this build can read. Anything else is refused by number. */
-const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3]
+const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4]
 
 /**
  * A version-1 storey has no `facade` field, because version 1 had no concept
@@ -93,6 +96,21 @@ function migrateStoreyFacade(version: number, raw: unknown): FacadeSystem {
 function migrateTypology(version: number, raw: unknown): Typology {
   if (version < 3 && raw === undefined) return 'custom'
   return requireMember<Typology>(raw, 'structure.typology', TYPOLOGIES)
+}
+
+/**
+ * A design saved before version 4 had no footprint, because every plan in the
+ * engine was a rectangle: its floor area, its envelope, the face the wind hit
+ * and the section it bent over were all computed rectangularly.
+ *
+ * So it migrates to `'rectangle'`, and reads back with *exactly* the numbers it
+ * was saved with — the same test `migrateStoreyFacade` has to pass. Defaulting
+ * to an ellipse would rewrite a saved design's carbon, its wind load and its
+ * safety factor at once, for a shape the student never chose.
+ */
+function migratePlanShape(version: number, raw: unknown): PlanShape {
+  if (version < 4 && raw === undefined) return 'rectangle'
+  return requireMember<PlanShape>(raw, 'planShape', PLAN_SHAPES)
 }
 
 /** How long a design name may be. It is a label in a list, not a document. */
@@ -197,6 +215,7 @@ function parseStorey(
       LATERAL_SYSTEMS,
     ),
     facade: migrateStoreyFacade(version, raw['facade']),
+    planShape: migratePlanShape(version, raw['planShape']),
   }
 }
 

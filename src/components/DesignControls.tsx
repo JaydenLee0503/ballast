@@ -29,9 +29,11 @@ import {
   FACADE_SYSTEMS,
   LATERAL_SYSTEMS,
   MATERIAL_LIBRARY,
+  PLAN_SHAPES,
   type ExposureCategory,
   type FacadeSystem,
   type LateralSystem,
+  type PlanShape,
 } from '@/engine'
 import { FACADE_BLURB, FACADE_LABEL } from '@/lib/facade.ts'
 import { ARCHETYPES } from '@/lib/typology.ts'
@@ -40,11 +42,27 @@ import {
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
   STOREY_COUNT_LIMITS,
+  STOREY_HEIGHT_LIMITS_M,
   TAPER_LIMITS,
 } from '@/lib/limits.ts'
 import { useDesignStore } from '@/store/design.ts'
 
 const MATERIALS = [...MATERIAL_LIBRARY.values()]
+
+/**
+ * Copy for the footprint chips. The blurbs name the consequence rather than the
+ * geometry, because the consequence is the lesson: a round plan is the reason
+ * chimneys and cooling towers are round.
+ */
+const PLAN_SHAPE_LABEL: Readonly<Record<PlanShape, string>> = {
+  rectangle: 'Rectangle',
+  ellipse: 'Round',
+}
+const PLAN_SHAPE_BLURB: Readonly<Record<PlanShape, string>> = {
+  rectangle: 'Flat faces. The wind gets something square to push on.',
+  ellipse:
+    'The wind slides around it, so a round floor catches roughly half as much — and holds about a fifth less floor, material and weight.',
+}
 const EXPOSURE_HINT: Readonly<Record<ExposureCategory, string>> = {
   B: 'Urban / wooded',
   C: 'Open terrain',
@@ -150,6 +168,10 @@ export function BasicControls() {
   const addStorey = useDesignStore((state) => state.addStorey)
   const removeStorey = useDesignStore((state) => state.removeStorey)
   const setPlanDimensions = useDesignStore((state) => state.setPlanDimensions)
+  const setStoreyHeight = useDesignStore((state) => state.setStoreyHeight)
+  const setPlanShape = useDesignStore((state) => state.setPlanShape)
+  const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
+  const selectStorey = useDesignStore((state) => state.selectStorey)
   const setTaper = useDesignStore((state) => state.setTaper)
   const setAllFacade = useDesignStore((state) => state.setAllFacade)
   const setTypology = useDesignStore((state) => state.setTypology)
@@ -157,7 +179,26 @@ export function BasicControls() {
   const reset = useDesignStore((state) => state.reset)
 
   const storeys = structure.storeys
+  // The size sliders act on the selected storey, or on the whole stack when
+  // nothing is selected — the idiom the material and envelope controls already
+  // use. `edited` is the storey whose numbers the sliders show; a selection
+  // pointing nowhere (it cannot, but the compiler does not know that) falls back
+  // to the ground storey rather than rendering an empty control.
+  const selected =
+    selectedStoreyIndex !== null && storeys[selectedStoreyIndex] !== undefined
+      ? selectedStoreyIndex
+      : null
   const ground = storeys[0]
+  const edited = (selected === null ? ground : storeys[selected]) ?? ground
+  // With no selection the chips describe the whole stack, so they only show a
+  // shape when the stack agrees on one. Mirrors the facade and material
+  // controls, where '' / undefined renders as "Mixed".
+  const shapeOfTarget =
+    selected !== null
+      ? edited?.planShape
+      : storeys.every((storey) => storey.planShape === storeys[0]?.planShape)
+        ? storeys[0]?.planShape
+        : undefined
   // With no selection the whole stack is being set, so the control only shows
   // a facade when the stack agrees on one. Mirrors the material control.
   const uniformFacade = storeys.every((s) => s.facade === storeys[0]?.facade)
@@ -193,7 +234,24 @@ export function BasicControls() {
       </div>
 
       <div data-tour="size">
-      <Group title="Your building" hint="How many floors, and how big each one is.">
+      <Group
+        title={selected === null ? 'Your building' : `Storey ${selected + 1}`}
+        hint={
+          selected === null
+            ? 'How many floors, and how big each one is. Click a storey in the model to shape just that one.'
+            : 'Height and plan for this storey alone. The floors above simply sit on it.'
+        }
+      >
+        {selected !== null && (
+          <button
+            type="button"
+            onClick={() => selectStorey(null)}
+            className="w-full rounded-lg border-2 border-ink/15 bg-paper py-1 font-display text-[0.7rem] text-ink/60 hover:border-ink hover:text-ink"
+          >
+            Back to the whole building
+          </button>
+        )}
+
         <Field label="Storeys" value={String(storeys.length)}>
           <span className="flex gap-1">
             <button
@@ -215,30 +273,80 @@ export function BasicControls() {
           </span>
         </Field>
 
-        <Field label="Width (X)" value={`${ground?.widthX_m ?? 0} m`}>
+        {/* Height, not just floor count: the two are different questions, and a
+            single-volume building (a hall, a warehouse, an arena) is the case
+            where floor count alone cannot express it. */}
+        <Field label="Floor height" value={`${edited?.height_m ?? 0} m`}>
+          <Slider
+            min={STOREY_HEIGHT_LIMITS_M.min}
+            max={STOREY_HEIGHT_LIMITS_M.max}
+            step={0.1}
+            value={edited?.height_m ?? STOREY_HEIGHT_LIMITS_M.min}
+            onChange={(height_m) =>
+              selected === null
+                ? setStoreyHeight(height_m)
+                : setStoreyHeight(height_m, selected)
+            }
+          />
+        </Field>
+
+        <Field label="Width (X)" value={`${edited?.widthX_m ?? 0} m`}>
           <Slider
             min={PLAN_WIDTH_LIMITS_M.min}
             max={PLAN_WIDTH_LIMITS_M.max}
             step={1}
-            value={ground?.widthX_m ?? PLAN_WIDTH_LIMITS_M.min}
+            value={edited?.widthX_m ?? PLAN_WIDTH_LIMITS_M.min}
             onChange={(widthX_m) =>
-              setPlanDimensions(widthX_m, ground?.widthY_m ?? PLAN_WIDTH_LIMITS_M.min)
+              setPlanDimensions(
+                widthX_m,
+                edited?.widthY_m ?? PLAN_WIDTH_LIMITS_M.min,
+                selected ?? undefined,
+              )
             }
           />
         </Field>
 
-        <Field label="Depth (Y)" value={`${ground?.widthY_m ?? 0} m`}>
+        <Field label="Depth (Y)" value={`${edited?.widthY_m ?? 0} m`}>
           <Slider
             min={PLAN_WIDTH_LIMITS_M.min}
             max={PLAN_WIDTH_LIMITS_M.max}
             step={1}
-            value={ground?.widthY_m ?? PLAN_WIDTH_LIMITS_M.min}
+            value={edited?.widthY_m ?? PLAN_WIDTH_LIMITS_M.min}
             onChange={(widthY_m) =>
-              setPlanDimensions(ground?.widthX_m ?? PLAN_WIDTH_LIMITS_M.min, widthY_m)
+              setPlanDimensions(
+                edited?.widthX_m ?? PLAN_WIDTH_LIMITS_M.min,
+                widthY_m,
+                selected ?? undefined,
+              )
             }
           />
         </Field>
 
+        {/* The footprint is a real engine input, not a drawing option: it moves
+            floor area, envelope area, the face the wind meets, the section the
+            storey bends over and the force coefficient. See engine/plan.ts. */}
+        <div className="grid grid-cols-2 gap-1">
+          {PLAN_SHAPES.map((shape) => (
+            <button
+              key={shape}
+              type="button"
+              onClick={() => setPlanShape(shape, selected ?? undefined)}
+              className={chipClass(shapeOfTarget === shape)}
+            >
+              {PLAN_SHAPE_LABEL[shape]}
+            </button>
+          ))}
+        </div>
+        <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/50">
+          {shapeOfTarget === undefined
+            ? 'Different floors have different footprints. Pick one to make them match.'
+            : PLAN_SHAPE_BLURB[shapeOfTarget]}
+        </p>
+
+        {/* Whole-stack by nature: a taper is a rule about how the plan changes
+            with height, so it regenerates every width and replaces any shaping
+            done storey by storey. The note says so rather than the control
+            silently undoing the student's work. */}
         <Field label="Taper" value={`${Math.round(taper * 100)}%`}>
           <Slider
             min={TAPER_LIMITS.min}
@@ -250,7 +358,8 @@ export function BasicControls() {
         </Field>
         <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/45">
           Narrow the top floors. Less area up high, where the wind is
-          strongest — and less building to pay for.
+          strongest — and less building to pay for. It shapes the whole stack,
+          so it replaces any floor you sized on its own.
         </p>
       </Group>
       </div>

@@ -6,8 +6,14 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
+import { analyze, MATERIAL_LIBRARY } from '@/engine'
+import { parseBlueprint } from '@/ai/blueprint/parse.ts'
 import { createSavedDesign } from '@/persistence'
-import { PLAN_WIDTH_LIMITS_M, TAPER_LIMITS } from '@/lib/limits.ts'
+import {
+  PLAN_WIDTH_LIMITS_M,
+  STOREY_HEIGHT_LIMITS_M,
+  TAPER_LIMITS,
+} from '@/lib/limits.ts'
 import {
   DEFAULT_HAZARD,
   DEFAULT_STRUCTURE,
@@ -195,5 +201,169 @@ describe('facade', () => {
     useDesignStore.getState().setAllFacade('ribbon')
     expect(useDesignStore.getState().structure).not.toBe(before)
     expect(before.storeys[0]?.facade).toBe('punched')
+  })
+})
+
+describe('applyBlueprint', () => {
+  /** A reply of the shape the model is asked for; the parser has checked it. */
+  const arena = () =>
+    parseBlueprint(
+      JSON.stringify({
+        name: 'Arena shell',
+        typology: 'custom',
+        storeyCount: 3,
+        storeyHeight_m: 7.5,
+        widthX_m: 58,
+        widthY_m: 44,
+        taper: 0.2,
+        materialId: 'structural-steel',
+        lateralSystem: 'braced-frame',
+        facade: 'punched', planShape: 'rectangle',
+        foundationType: 'raft',
+        embedmentDepth_m: 1.5,
+        anchorCapacity_kN: 1400,
+        exposureCategory: 'C',
+        interpretation: 'A wide steel box.',
+        notes: 'Steel, because the spans are long.',
+        caveats: ['long-span-roof'],
+      }),
+      'an arena',
+    )
+
+  /** The same reply, but describing a hall with two tiers over it. */
+  const sectionedArena = () =>
+    parseBlueprint(
+      JSON.stringify({
+        name: 'Arena',
+        typology: 'custom',
+        storeyCount: 3,
+        storeyHeight_m: 4,
+        widthX_m: 44,
+        widthY_m: 34,
+        taper: 0.4,
+        materialId: 'structural-steel',
+        lateralSystem: 'braced-frame',
+        facade: 'punched', planShape: 'rectangle',
+        foundationType: 'raft',
+        embedmentDepth_m: 1.5,
+        anchorCapacity_kN: 1400,
+        exposureCategory: 'C',
+        sections: [
+          { count: 1, height_m: 8, widthX_m: 58, widthY_m: 44 },
+          { count: 2 },
+        ],
+        interpretation: 'A hall with two tiers.',
+        notes: '',
+        caveats: [],
+      }),
+      'an arena',
+    )
+
+  it('writes an ordinary structure the engine can analyse', () => {
+    useDesignStore.getState().applyBlueprint(arena())
+    const { structure, hazard } = useDesignStore.getState()
+    expect(structure.storeys).toHaveLength(3)
+    expect(structure.storeys[0]?.materialId).toBe('structural-steel')
+    expect(analyze(structure, hazard, MATERIAL_LIBRARY).scoreCard.carbonKg).toBeGreaterThan(0)
+  })
+
+  it('generates the widths from the taper it was given', () => {
+    useDesignStore.getState().applyBlueprint(arena())
+    expect(useDesignStore.getState().taper).toBeCloseTo(0.2)
+    // Top storey at 80% of the base, the same rule every taper drag follows.
+    expect(widths()[2]).toBeCloseTo(58 * 0.8, 1)
+  })
+
+  it('becomes the baseline, so the next edit is measured against it', () => {
+    useDesignStore.getState().applyBlueprint(arena())
+    const { structure, baseline } = useDesignStore.getState()
+    expect(baseline.label).toBe('Arena shell')
+    // The same object, so the first reading shows no change at all.
+    expect(baseline.structure).toBe(structure)
+  })
+
+  it('leaves the storm alone', () => {
+    useDesignStore.getState().setGustSpeed(240)
+    useDesignStore.getState().applyBlueprint(arena())
+    expect(useDesignStore.getState().hazard.gustSpeed_kmh).toBe(240)
+  })
+
+  it('keeps a sectioned stack exactly as proposed', () => {
+    useDesignStore.getState().applyBlueprint(sectionedArena())
+    const storeys = useDesignStore.getState().structure.storeys
+    expect(storeys).toHaveLength(3)
+    // The tall hall survives, and so do its widths: a taper across two sizes
+    // would have regenerated all three storeys from the ground one.
+    expect(storeys[0]).toMatchObject({ height_m: 8, widthX_m: 58, widthY_m: 44 })
+    expect(storeys[1]).toMatchObject({ height_m: 4, widthX_m: 44 })
+    expect(storeys[2]).toMatchObject({ height_m: 4, widthX_m: 44 })
+  })
+
+  it('shows the taper the sectioned stack actually has, not the proposed one', () => {
+    useDesignStore.getState().applyBlueprint(sectionedArena())
+    // The proposal said 0.4, but its own sections say 44/58, so the control
+    // describes what is on screen. Same rule loadDesign follows.
+    expect(useDesignStore.getState().taper).toBeCloseTo(1 - 44 / 58, 2)
+  })
+})
+
+describe('shaping one storey', () => {
+  it('sizes only the selected storey', () => {
+    useDesignStore.getState().setPlanDimensions(30, 30, 2)
+    const storeys = useDesignStore.getState().structure.storeys
+    expect(storeys[2]).toMatchObject({ widthX_m: 30, widthY_m: 30 })
+    expect(storeys[1]?.widthX_m).toBe(DEFAULT_STRUCTURE.storeys[1]?.widthX_m)
+  })
+
+  it('heightens only the selected storey', () => {
+    useDesignStore.getState().setStoreyHeight(8, 0)
+    const storeys = useDesignStore.getState().structure.storeys
+    expect(storeys[0]?.height_m).toBe(8)
+    expect(storeys[1]?.height_m).toBe(DEFAULT_STRUCTURE.storeys[1]?.height_m)
+  })
+
+  it('re-reads the taper off a stack it no longer generated', () => {
+    useDesignStore.getState().setPlanDimensions(9, 9, 5)
+    // The top storey is now half the base, so the control says so rather than
+    // going on claiming the stack is prismatic.
+    expect(useDesignStore.getState().taper).toBeCloseTo(0.5, 2)
+  })
+
+  it('does not let Add flatten a hand-shaped stack', () => {
+    useDesignStore.getState().setPlanDimensions(8, 8, 3)
+    const before = widths()
+    useDesignStore.getState().addStorey()
+    // The storeys that existed keep their widths; only a stack the taper
+    // generated gets regenerated when the count changes.
+    expect(widths().slice(0, before.length)).toEqual(before)
+  })
+
+  it('still re-tapers a stack the taper did generate', () => {
+    useDesignStore.getState().setTaper(0.4)
+    const before = widths()
+    useDesignStore.getState().addStorey()
+    const after = widths()
+    expect(after).toHaveLength(before.length + 1)
+    // Spread across the new count, so the top is still (1 - taper) of the base.
+    expect((after[after.length - 1] ?? 0) / (after[0] ?? 1)).toBeCloseTo(0.6, 2)
+  })
+})
+
+describe('storey height', () => {
+  it('sets every storey at once, and stays inside the limits', () => {
+    useDesignStore.getState().setStoreyHeight(7.5)
+    for (const storey of useDesignStore.getState().structure.storeys) {
+      expect(storey.height_m).toBe(7.5)
+    }
+    useDesignStore.getState().setStoreyHeight(500)
+    expect(useDesignStore.getState().structure.storeys[0]?.height_m).toBe(
+      STOREY_HEIGHT_LIMITS_M.max,
+    )
+  })
+
+  it('does not disturb the plan', () => {
+    const before = widths()
+    useDesignStore.getState().setStoreyHeight(4)
+    expect(widths()).toEqual(before)
   })
 })

@@ -16,11 +16,14 @@
 
 import type {
   ExposureCategory,
+  PlanShape,
   Storey,
   Structure,
   WindHazard,
 } from './types.ts'
+import { projectPlan } from './plan.ts'
 import {
+  CF_ROUND_TABLE,
   CP_LEEWARD_TABLE,
   CP_WINDWARD,
   EXPOSURE_ROUGHNESS_M,
@@ -126,13 +129,6 @@ export function velocityPressure_Pa(
   )
 }
 
-export interface PlanProjection {
-  /** Width of the face the wind sees (perpendicular to the wind). */
-  acrossWindWidth_m: number
-  /** Plan depth parallel to the wind; the overturning lever arm base. */
-  alongWindDepth_m: number
-}
-
 /**
  * Project a rectangular plan onto the wind direction.
  *
@@ -148,20 +144,6 @@ export interface PlanProjection {
  * SIMPLIFICATION: at skew angles this bounding-box width overestimates the
  * true projected area of the building slightly, which is conservative.
  */
-export function projectPlan(
-  widthX_m: number,
-  widthY_m: number,
-  directionDeg: number,
-): PlanProjection {
-  const theta = (directionDeg * Math.PI) / 180
-  const s = Math.abs(Math.sin(theta))
-  const c = Math.abs(Math.cos(theta))
-  return {
-    acrossWindWidth_m: widthX_m * s + widthY_m * c,
-    alongWindDepth_m: widthX_m * c + widthY_m * s,
-  }
-}
-
 /**
  * Net force coefficient Cf = Cp,windward + |Cp,leeward|.
  *
@@ -178,6 +160,51 @@ export function netForceCoefficient(
   const ratios = CP_LEEWARD_TABLE.map(([r]) => r)
   const cps = CP_LEEWARD_TABLE.map(([, cp]) => cp)
   return CP_WINDWARD + interpolate(ratios, cps, ratio)
+}
+
+/**
+ * Force coefficient for a round cross-section, ASCE 7-16 Table 29.4-1,
+ * interpolated on the *whole-building* slenderness h/D.
+ *
+ * h/D is a property of the building, not of a storey: a 3 m slice of a 30 m
+ * tower is not a squat cylinder, and reading the table with a storey's own
+ * proportions would return the bottom of the range for every design. So the
+ * total height is passed down from `analyze()` rather than taken from the
+ * storey, which is why `storeyWindLoad` needs it.
+ *
+ * `D` is the across-wind width at this storey and this bearing — the diameter
+ * the wind actually meets.
+ */
+export function roundForceCoefficient(
+  totalHeight_m: number,
+  acrossWindWidth_m: number,
+): number {
+  const slenderness =
+    acrossWindWidth_m <= 0 ? 0 : totalHeight_m / acrossWindWidth_m
+  const ratios = CF_ROUND_TABLE.map(([r]) => r)
+  const cfs = CF_ROUND_TABLE.map(([, cf]) => cf)
+  return interpolate(ratios, cfs, slenderness)
+}
+
+/**
+ * The force coefficient for whichever plan this storey has.
+ *
+ * Two different clauses, kept apart rather than blended: the rectangular case
+ * builds Cf from windward and leeward pressure coefficients (Fig. 27.3-1), the
+ * round case reads a force coefficient straight off Table 29.4-1. They meet at
+ * about 1.3 for a squat square plan, which is the check that they are the same
+ * quantity — but neither is derived from the other, and a shape that is neither
+ * would need its own clause rather than an interpolation between these two.
+ */
+export function forceCoefficient(
+  planShape: PlanShape,
+  alongWindDepth_m: number,
+  acrossWindWidth_m: number,
+  totalHeight_m: number,
+): number {
+  return planShape === 'ellipse'
+    ? roundForceCoefficient(totalHeight_m, acrossWindWidth_m)
+    : netForceCoefficient(alongWindDepth_m, acrossWindWidth_m)
 }
 
 export interface StoreyGeometry {
@@ -223,16 +250,20 @@ export function storeyWindLoad(
   exposure: ExposureCategory,
   hazard: WindHazard,
   geometry: StoreyGeometry,
+  totalHeight_m: number,
 ): StoreyWindLoad {
   const { storey, midHeight_m } = geometry
   const projection = projectPlan(
     storey.widthX_m,
     storey.widthY_m,
     hazard.directionDeg,
+    storey.planShape,
   )
-  const cf = netForceCoefficient(
+  const cf = forceCoefficient(
+    storey.planShape,
     projection.alongWindDepth_m,
     projection.acrossWindWidth_m,
+    totalHeight_m,
   )
   const qz = velocityPressure_Pa(exposure, midHeight_m, hazard.gustSpeed_kmh)
   const area = projection.acrossWindWidth_m * storey.height_m

@@ -109,7 +109,7 @@ describe('hand-calculated single-storey case', () => {
         lateralSystem: 'shear-wall',
         // No envelope: the thirteen steps in the header are a frame-only
         // take-off, and they must stay arithmetically reachable by hand.
-        facade: 'exposed',
+        facade: 'exposed', planShape: 'rectangle',
       },
     ],
     foundation: {
@@ -215,7 +215,7 @@ describe('monotonicity in gust speed', () => {
       widthY_m: 9,
       materialId: 'structural-steel',
       lateralSystem: 'braced-frame' as const,
-      facade: 'exposed' as const,
+      facade: 'exposed' as const, planShape: 'rectangle',
     })),
     foundation: { type: 'piled', embedmentDepth_m: 2, anchorCapacity_kN: 400 },
     typology: 'custom',
@@ -292,7 +292,7 @@ describe('tall and light vs squat and heavy', () => {
       // Frame only on both towers: this test is about slenderness, and a
       // facade would add weight in proportion to surface area, which is a
       // different effect entirely.
-      facade: 'exposed' as const,
+      facade: 'exposed' as const, planShape: 'rectangle',
     })),
     foundation,
     typology: 'custom',
@@ -307,7 +307,7 @@ describe('tall and light vs squat and heavy', () => {
       widthY_m: 20,
       materialId: 'reinforced-concrete',
       lateralSystem: 'shear-wall' as const,
-      facade: 'exposed' as const,
+      facade: 'exposed' as const, planShape: 'rectangle',
     })),
     foundation,
     typology: 'custom',
@@ -379,7 +379,7 @@ describe('slenderness is what drives it, not height alone', () => {
           widthY_m: width,
           materialId: 'cross-laminated-timber',
           lateralSystem: 'braced-frame' as const,
-          facade: 'exposed' as const,
+          facade: 'exposed' as const, planShape: 'rectangle',
         })),
         foundation: {
           type: 'strip-footing',
@@ -400,5 +400,108 @@ describe('slenderness is what drives it, not height alone', () => {
       expect(fos).toBeGreaterThan(previous)
       previous = fos
     }
+  })
+})
+
+describe('a round plan, end to end', () => {
+  const hazard: WindHazard = {
+    kind: 'wind',
+    gustSpeed_kmh: 160,
+    directionDeg: 0,
+    terrainRoughness: 0.02,
+  }
+
+  const tower = (planShape: 'rectangle' | 'ellipse', storeyCount = 6): Structure => ({
+    typology: 'custom',
+    storeys: Array.from({ length: storeyCount }, () => ({
+      height_m: 3.5,
+      widthX_m: 20,
+      widthY_m: 20,
+      materialId: 'reinforced-concrete',
+      lateralSystem: 'shear-wall' as const,
+      facade: 'punched' as const,
+      planShape,
+    })),
+    foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 600 },
+    exposureCategory: 'C',
+  })
+
+  const box = () => analyze(tower('rectangle'), hazard, MATERIAL_LIBRARY)
+  const round = () => analyze(tower('ellipse'), hazard, MATERIAL_LIBRARY)
+
+  it('catches less wind than the square tower it is inscribed in', () => {
+    // The lesson the shape exists to teach, and the reason chimneys are round.
+    expect(round().stability.baseShear_kN).toBeLessThan(box().stability.baseShear_kN)
+  })
+
+  it('holds less material, so it weighs and costs and emits less', () => {
+    const a = round().scoreCard
+    const b = box().scoreCard
+    expect(a.carbonKg).toBeLessThan(b.carbonKg)
+    expect(a.costUsd).toBeLessThan(b.costUsd)
+    expect(round().stability.totalSelfWeight_kN).toBeLessThan(
+      box().stability.totalSelfWeight_kN,
+    )
+  })
+
+  it('scales its floor area and envelope by the shape, not by the box', () => {
+    const r = round().storeys[0]
+    const b = box().storeys[0]
+    if (r === undefined || b === undefined) throw new Error('no ground storey')
+    // pi/4 of the enclosing rectangle's volume, and pi/4 of its perimeter too,
+    // because a circle's circumference is pi*D against a square's 4D.
+    expect(r.materialVolume_m3 / b.materialVolume_m3).toBeCloseTo(Math.PI / 4, 6)
+    expect(r.facadeArea_m2 / b.facadeArea_m2).toBeCloseTo(Math.PI / 4, 6)
+  })
+
+  it('presents the same face from every direction', () => {
+    const straight = analyze(tower('ellipse'), hazard, MATERIAL_LIBRARY)
+    const diagonal = analyze(
+      tower('ellipse'),
+      { ...hazard, directionDeg: 45 },
+      MATERIAL_LIBRARY,
+    )
+    expect(diagonal.stability.baseShear_kN).toBeCloseTo(
+      straight.stability.baseShear_kN,
+      6,
+    )
+    // Whereas the square tower is measurably worse cornerwise.
+    const squareDiagonal = analyze(
+      tower('rectangle'),
+      { ...hazard, directionDeg: 45 },
+      MATERIAL_LIBRARY,
+    )
+    expect(squareDiagonal.stability.baseShear_kN).toBeGreaterThan(
+      analyze(tower('rectangle'), hazard, MATERIAL_LIBRARY).stability.baseShear_kN,
+    )
+  })
+
+  it('warns that a slender round plan is outside what it models', () => {
+    // 24 storeys at 3.5 m over a 20 m diameter is h/D = 4.2 — under the limit.
+    expect(
+      analyze(tower('ellipse', 24), hazard, MATERIAL_LIBRARY).warnings.join(' '),
+    ).not.toMatch(/vortex shedding/)
+    const slender: Structure = {
+      ...tower('ellipse', 24),
+      storeys: tower('ellipse', 24).storeys.map((storey) => ({
+        ...storey,
+        widthX_m: 12,
+        widthY_m: 12,
+      })),
+    }
+    // h/D = 7, where across-wind response would normally govern and this engine
+    // has nothing to say — so it says that rather than looking confident.
+    expect(analyze(slender, hazard, MATERIAL_LIBRARY).warnings.join(' ')).toMatch(
+      /vortex shedding/,
+    )
+  })
+
+  it('leaves a rectangular design scoring exactly as it always did', () => {
+    // The regression that matters: adding a shape must not move a number for a
+    // building that did not use it.
+    const result = box()
+    expect(result.scoreCard.safetyFactor).toBeGreaterThan(0)
+    expect(result.storeys[0]?.facadeArea_m2).toBeCloseTo(4 * 20 * 3.5, 10)
+    expect(result.storeys[0]?.materialVolume_m3).toBeGreaterThan(0)
   })
 })

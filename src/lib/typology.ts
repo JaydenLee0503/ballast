@@ -23,6 +23,12 @@
  * not, and that is the one failure this codebase is built to refuse. Adding
  * one means adding a structural form to the engine, with its own citations
  * and its own tests — not an entry in this table.
+ *
+ * A student can still ask for one, in words, through `ai/blueprint/`. What they
+ * get is not a stadium: it is the closest honest stack of boxes, stamped
+ * `'custom'`, with the engine's fixed sentences about what is missing printed
+ * beside it — no long-span element, no uplift case, no crowd on the floor. That
+ * is the difference between refusing to pretend and refusing to answer.
  */
 
 import type {
@@ -209,6 +215,10 @@ export function structureFor(entry: Archetype): Structure {
       materialId: entry.materialId,
       lateralSystem: entry.lateralSystem,
       facade: entry.facade,
+      // Every archetype is rectangular. A round plan is a deliberate move, not
+      // something a preset should make on a student's behalf — and none of these
+      // six buildings is one in the world either.
+      planShape: 'rectangle',
     })),
     foundation: {
       type: entry.foundationType,

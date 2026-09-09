@@ -20,11 +20,9 @@
 
 import type { Storey } from './types.ts'
 import { DRIFT_LIMIT_RATIO, LATERAL_STIFFNESS_COEFFICIENT } from './constants.ts'
-
-/** Plan area resisting lateral load at this storey. */
-export function planArea_m2(storey: Storey): number {
-  return storey.widthX_m * storey.widthY_m
-}
+// Plan area is shape-dependent and lives with the rest of the plan geometry, so
+// a round storey is less stiff for the same reason it is lighter.
+import { planArea_m2 } from './plan.ts'
 
 /** Lateral stiffness of one storey, in kN/m. */
 export function storeyStiffness_kN_per_m(

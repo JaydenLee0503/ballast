@@ -35,11 +35,12 @@
 
 import { useEffect, useMemo, type RefObject } from 'react'
 import { Edges } from '@react-three/drei'
-import { BufferGeometry, Float32BufferAttribute } from 'three'
+import { BoxGeometry, BufferGeometry, CylinderGeometry, Float32BufferAttribute } from 'three'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import {
   FACADE,
   MATERIAL_LIBRARY,
+  planPerimeter_m,
   type Storey,
   type StoreyResult,
   type Structure,
@@ -52,6 +53,37 @@ import { createWindowedMaterial } from './windows.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
 const STOREY_GAP_M = 0.08
+
+/**
+ * Sides on a round storey's drum.
+ *
+ * 48 is fine enough that a 60 m plan reads as a curve rather than as a polygon,
+ * and coarse enough to stay cheap on a stack of two dozen. It also sits under
+ * drei's 15-degree edge threshold (360/48 = 7.5), so `<Edges>` outlines the top
+ * and bottom rims and leaves the facets alone — which is what makes a drum read
+ * as one surface instead of forty-eight panels.
+ */
+const ROUND_SEGMENTS = 48
+
+/**
+ * The drawn solid for a storey, at its real size.
+ *
+ * Built at true dimensions rather than as a unit shape the mesh scales, because
+ * the window shader reads vertex positions in metres: it lays panes out against
+ * the wall the engine charged for. A scaled unit cylinder would put the set-out
+ * in the wrong space and quietly break the one property `windows.ts` exists to
+ * hold — that the glass on screen covers the ratio the engine was given.
+ */
+function storeySolid(storey: Storey, height_m: number): BufferGeometry {
+  if (storey.planShape === 'ellipse') {
+    return new CylinderGeometry(0.5, 0.5, 1, ROUND_SEGMENTS).scale(
+      storey.widthX_m,
+      height_m,
+      storey.widthY_m,
+    )
+  }
+  return new BoxGeometry(storey.widthX_m, height_m, storey.widthY_m)
+}
 
 /**
  * Window bay for the student's own building. Roughly a domestic window pitch,
@@ -135,7 +167,28 @@ function StoreyBox({
     // The shader lays panes out against the real face sizes, so it has to be
     // told them; the geometry knows, but the vertex shader only sees corners.
     windowed.setSize(storey.widthX_m, boxHeight, storey.widthY_m)
-  }, [windowed, windowToWallRatio, storey.widthX_m, storey.widthY_m, boxHeight])
+    // A round storey has one continuous elevation, set out against the same
+    // perimeter the engine billed the facade for.
+    windowed.setRound(
+      storey.planShape === 'ellipse' ? planPerimeter_m(storey) : null,
+    )
+  }, [
+    windowed,
+    windowToWallRatio,
+    storey,
+    storey.widthX_m,
+    storey.widthY_m,
+    storey.planShape,
+    boxHeight,
+  ])
+
+  const solid = useMemo(
+    () => storeySolid(storey, boxHeight),
+    [storey.planShape, storey.widthX_m, storey.widthY_m, boxHeight],
+  )
+  // r3f disposes geometry it created from JSX args; one built by hand here is
+  // ours to release, and a slider drag builds a new one every frame.
+  useEffect(() => () => solid.dispose(), [solid])
 
   // The one per-frame value: the panes come on as the sky goes down.
   useFrame(() => windowed.setNight(night.current))
@@ -145,6 +198,7 @@ function StoreyBox({
       castShadow
       receiveShadow
       material={windowed.material}
+      geometry={solid}
       position={[0, result.baseElevation_m + storey.height_m / 2, 0]}
       onClick={(event: ThreeEvent<MouseEvent>) => {
         // Without this the click passes through to every storey behind.
@@ -165,7 +219,6 @@ function StoreyBox({
         onHoverEnd(index)
       }}
     >
-      <boxGeometry args={[storey.widthX_m, boxHeight, storey.widthY_m]} />
       {/* Ink by default, the studio's own outline colour; paper on hover;
           white on selection. */}
       <Edges color={selected ? '#ffffff' : hovered ? '#fff7ef' : '#2f2748'} />
@@ -245,9 +298,18 @@ export function FoundationBlock({ structure }: { structure: Structure }) {
   const depth = structure.foundation.embedmentDepth_m
   if (depth <= 0) return null
 
+  return <FoundationSolid ground={ground} depth={depth} />
+}
+
+/** Split out so the geometry can be memoised and disposed like a storey's. */
+function FoundationSolid({ ground, depth }: { ground: Storey; depth: number }) {
+  // The pad follows the building's footprint: a rectangular block under a drum
+  // would read as a claim about a foundation shape the engine never considered.
+  const solid = useMemo(() => storeySolid(ground, depth), [ground, depth])
+  useEffect(() => () => solid.dispose(), [solid])
+
   return (
-    <mesh position={[0, -depth / 2, 0]} receiveShadow>
-      <boxGeometry args={[ground.widthX_m, depth, ground.widthY_m]} />
+    <mesh position={[0, -depth / 2, 0]} receiveShadow geometry={solid}>
       <meshStandardMaterial color="#44403c" roughness={0.95} />
       <Edges color="#1c1917" />
     </mesh>
@@ -291,8 +353,13 @@ const DECK_THICKNESS_M = 0.16
  * invented in a component.
  */
 export function RoofCap({ structure }: { structure: Structure }) {
-  const form = roofForm(structure.typology)
   const top = structure.storeys[structure.storeys.length - 1]
+  // A gable, a shed and a parapet are all rectangular objects, and there is no
+  // honest round version of them here: a hipped drum roof is a shape the engine
+  // has nothing to say about, and inventing one would be the viewport claiming
+  // something. A round-topped building therefore gets no cap, which is what
+  // 'flat' has always drawn.
+  const form = top?.planShape === 'ellipse' ? 'flat' : roofForm(structure.typology)
   const widthX_m = top?.widthX_m ?? 0
   const widthY_m = top?.widthY_m ?? 0
 

@@ -64,6 +64,15 @@ export interface WindowedMaterial {
   /** Size of the box, for the non-instanced case. Metres. */
   setSize: (x: number, y: number, z: number) => void
   /**
+   * Wrap the elevation around a round plan, or `null` for a flat-faced box.
+   *
+   * The argument is the plan's perimeter — from `planPerimeter_m` in the
+   * engine, the same function that charges the facade for its area — so the
+   * number of bays drawn round a drum is set out against the wall the engine
+   * billed for, not against a circumference the renderer worked out on its own.
+   */
+  setRound: (perimeter_m: number | null) => void
+  /**
    * The material's finish: sheen, and the set-out drawn across the wall. See
    * `lib/materialLook.ts` for why this is deliberately not a colour.
    */
@@ -89,6 +98,8 @@ const FRAGMENT_COMMON = /* glsl */ `
   uniform vec2 uBay;
   uniform float uSurface;
   uniform float uRelief;
+  uniform float uRound;
+  uniform float uPerimeter;
   varying vec3 vWinPos;
   varying vec3 vWinNormal;
   varying vec3 vWinSize;
@@ -150,6 +161,9 @@ export function createWindowedMaterial(
     uLitFraction: { value: options.litFraction },
     uBay: { value: [options.bayWidth_m, options.bayHeight_m] as [number, number] },
     uSize: { value: [1, 1, 1] as [number, number, number] },
+    // 0 draws flat faces, 1 wraps the set-out round an elliptical plan.
+    uRound: { value: 0 },
+    uPerimeter: { value: 0 },
     // -1 until a finish is set, which the shader reads as "draw no set-out".
     // A default of 0 would silently give every unfinished wall cast-concrete
     // panel joints, which is a lie that looks like a decision.
@@ -165,6 +179,8 @@ export function createWindowedMaterial(
     shader.uniforms['uLitFraction'] = uniforms.uLitFraction
     shader.uniforms['uBay'] = uniforms.uBay
     shader.uniforms['uSize'] = uniforms.uSize
+    shader.uniforms['uRound'] = uniforms.uRound
+    shader.uniforms['uPerimeter'] = uniforms.uPerimeter
     shader.uniforms['uSurface'] = uniforms.uSurface
     shader.uniforms['uRelief'] = uniforms.uRelief
 
@@ -202,7 +218,9 @@ export function createWindowedMaterial(
          float winSurf = 0.0;
          {
            vec3 winFace = abs(vWinNormal);
-           // Roofs and soffits get neither windows nor a wall set-out.
+           // Roofs and soffits get neither windows nor a wall set-out. A
+           // cylinder's caps have the same vertical normal as a box's, so this
+           // one test covers both shapes.
            if (winFace.y < 0.5) {
              // Which two of the box's dimensions this face spans, and where
              // on it we are. Both run -size/2 .. +size/2.
@@ -210,6 +228,26 @@ export function createWindowedMaterial(
                ? vec2(vWinSize.z, vWinSize.y)
                : vec2(vWinSize.x, vWinSize.y);
              vec2 winWall = winFace.x > 0.5 ? vWinPos.zy : vWinPos.xy;
+
+             if (uRound > 0.5) {
+               // A round plan has one continuous elevation, so it is set out
+               // against the whole perimeter rather than against a face. The
+               // horizontal coordinate is the ellipse's own parameter t, where
+               // the point is (a cos t, b sin t), not the arc length, which
+               // has no closed form. Bays are therefore even in t and slightly
+               // uneven in metres, and that is harmless: a pane still fills
+               // sqrt(ratio) of whatever bay it is in, so the fraction of wall
+               // it covers is the window-to-wall ratio everywhere, which is the
+               // property the whole set-out exists to hold.
+               //
+               // The bay count comes out of floor(perimeter/bay + 0.5), an
+               // integer, so the wrap-around seam lands exactly on a bay
+               // boundary and there is no visible join.
+               float winT = atan(vWinPos.z / max(vWinSize.z * 0.5, 1e-4),
+                                 vWinPos.x / max(vWinSize.x * 0.5, 1e-4));
+               winFaceSize = vec2(uPerimeter, vWinSize.y);
+               winWall = vec2((winT / (2.0 * PI)) * uPerimeter, vWinPos.y);
+             }
 
              // The set-out is a property of the wall, not of its glazing, so
              // it is drawn on a blank elevation too.
@@ -261,6 +299,10 @@ export function createWindowedMaterial(
       uniforms.uSize.value[0] = x
       uniforms.uSize.value[1] = y
       uniforms.uSize.value[2] = z
+    },
+    setRound(perimeter_m) {
+      uniforms.uRound.value = perimeter_m === null ? 0 : 1
+      uniforms.uPerimeter.value = perimeter_m ?? 0
     },
     setFinish({ roughness, metalness, surface, relief }) {
       material.roughness = roughness

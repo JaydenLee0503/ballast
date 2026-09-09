@@ -22,10 +22,11 @@
 
 import type { MaterialEntry, Storey, Structure } from './types.ts'
 import { FACADE, GRAVITY_M_S2, STRUCTURAL_FRACTION } from './constants.ts'
+import { planArea_m2, planPerimeter_m } from './plan.ts'
 
 /** Enclosed volume of a storey, before any structural fraction is applied. */
 export function grossVolume_m3(storey: Storey): number {
-  return storey.height_m * storey.widthX_m * storey.widthY_m
+  return storey.height_m * planArea_m2(storey)
 }
 
 /**
@@ -42,10 +43,7 @@ export function grossVolume_m3(storey: Storey): number {
  * cores, stairs or the walls themselves.
  */
 export function grossFloorArea_m2(structure: Structure): number {
-  return structure.storeys.reduce(
-    (total, storey) => total + storey.widthX_m * storey.widthY_m,
-    0,
-  )
+  return structure.storeys.reduce((total, storey) => total + planArea_m2(storey), 0)
 }
 
 /**
@@ -94,7 +92,7 @@ export function storeyQuantities(
  * product asks anyone to make.
  */
 export function facadeArea_m2(storey: Storey): number {
-  return 2 * (storey.widthX_m + storey.widthY_m) * storey.height_m
+  return planPerimeter_m(storey) * storey.height_m
 }
 
 export interface FacadeQuantities {

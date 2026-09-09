@@ -15,7 +15,7 @@ export const DEMO_STRUCTURE: Structure = {
     widthY_m: 12,
     materialId: 'cross-laminated-timber',
     lateralSystem: 'shear-wall' as const,
-    facade: 'exposed' as const,
+    facade: 'exposed' as const, planShape: 'rectangle',
   })),
   foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 600 },
   typology: 'custom',

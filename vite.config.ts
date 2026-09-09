@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
+import { blueprintApi } from './plugins/blueprintApi.ts'
 import { critiqueApi } from './plugins/critiqueApi.ts'
 
 // https://vite.dev/config/
@@ -11,16 +12,20 @@ export default defineConfig(({ mode }) => {
   // credentials are readable here. They are passed to the plugin explicitly
   // and never into `define`, so they cannot reach the browser bundle.
   const env = loadEnv(mode, process.cwd(), '')
+  // One set of credentials, two routes: prose about a design, and a design to
+  // start from. Both are dev/preview middlewares that keep the key server-side.
+  const provider = {
+    apiKey: env['FEATHERLESS_API_KEY'],
+    model: env['FEATHERLESS_MODEL'],
+    baseUrl: env['FEATHERLESS_BASE_URL'],
+  }
 
   return {
     plugins: [
       react(),
       tailwindcss(),
-      critiqueApi({
-        apiKey: env['FEATHERLESS_API_KEY'],
-        model: env['FEATHERLESS_MODEL'],
-        baseUrl: env['FEATHERLESS_BASE_URL'],
-      }),
+      critiqueApi(provider),
+      blueprintApi(provider),
     ],
     resolve: {
       // `@/engine` is the app's only sanctioned door into the simulation
@@ -40,7 +45,11 @@ export default defineConfig(({ mode }) => {
           'src/ai/**/*.ts',
           'src/persistence/**/*.ts',
         ],
-        exclude: ['src/**/*.test.ts', 'src/ai/client.ts'],
+        exclude: [
+          'src/**/*.test.ts',
+          'src/ai/client.ts',
+          'src/ai/blueprint/client.ts',
+        ],
       },
     },
   }

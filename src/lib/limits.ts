@@ -37,11 +37,11 @@ export const GUST_SPEED_LIMITS_KMH: Limits = { min: 0, max: 300 }
 export const ANCHOR_CAPACITY_LIMITS_KN: Limits = { min: 0, max: 5000 }
 
 /**
- * Storey height and embedment depth have no controls yet — the default
- * structure fixes them. They are bounded anyway, because a design arriving
- * from storage or a URL is not constrained by which controls happen to exist
- * today, and a 5000 m storey would sail through the engine and break only the
- * camera.
+ * Storey height has a slider (floor height, set on every storey at once);
+ * embedment depth has no control yet and is fixed by the design it arrived in.
+ * Both are bounded anyway, because a design arriving from storage, a URL or a
+ * model's proposal is not constrained by which controls happen to exist today,
+ * and a 5000 m storey would sail through the engine and break only the camera.
  */
 export const STOREY_HEIGHT_LIMITS_M: Limits = { min: 2, max: 8 }
 export const EMBEDMENT_DEPTH_LIMITS_M: Limits = { min: 0, max: 20 }

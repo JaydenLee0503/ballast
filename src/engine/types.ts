@@ -86,6 +86,29 @@ export type Typology =
   | 'warehouse'
   | 'school'
 
+/**
+ * The footprint a storey is idealised as.
+ *
+ * A REAL INPUT, not a rendering choice. Every place the engine touches plan
+ * geometry asks this question and answers it differently: floor and material
+ * volume (`pi/4` of the enclosing rectangle for an ellipse), envelope area (an
+ * elliptical perimeter, not a rectangular one), the silhouette the wind sees at
+ * a given bearing, the section modulus the storey bends over, and — the one a
+ * student is meant to notice — the force coefficient, because a round building
+ * sheds wind that a square one catches. See `plan.ts`, which owns all of it.
+ *
+ * `'ellipse'` covers the circle: equal widths make one. There is no separate
+ * circle member, because a circle is not a different calculation and a second
+ * name for the same formula is a second thing to keep in step.
+ *
+ * WHAT IT IS NOT. It is not a curved *structure*. An arch, a vault and a dome
+ * carry load along a curve into abutments, and this engine has no such load
+ * path — see `lib/typology.ts` and the blueprint caveats. An elliptical plan is
+ * still a storey resisting wind as a vertical cantilever; only its cross-section
+ * has changed.
+ */
+export type PlanShape = 'rectangle' | 'ellipse'
+
 export type FoundationType =
   | 'slab-on-grade'
   | 'strip-footing'
@@ -152,8 +175,19 @@ export type MaterialLibrary = ReadonlyMap<string, MaterialEntry>
 
 export interface Storey {
   height_m: number
+  /**
+   * The plan dimensions. For `planShape: 'ellipse'` these are the full axes of
+   * the ellipse — the box it is inscribed in — so the same two sliders describe
+   * both shapes and switching between them keeps the building the same size.
+   */
   widthX_m: number
   widthY_m: number
+  /**
+   * Required, with no default in the engine, for the same reason `facade` is:
+   * a storey with no stated footprint would silently score as a rectangle, and
+   * "we forgot to ask" must not produce a number by accident.
+   */
+  planShape: PlanShape
   materialId: string
   lateralSystem: LateralSystem
   /**

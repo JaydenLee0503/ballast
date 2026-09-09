@@ -12,6 +12,7 @@ import type {
   FacadeSystem,
   FoundationType,
   LateralSystem,
+  PlanShape,
   StructuralClass,
   Typology,
 } from './types.ts'
@@ -69,6 +70,8 @@ export const TYPOLOGIES = exhaustiveList<Typology>()([
   'warehouse',
   'school',
 ])
+
+export const PLAN_SHAPES = exhaustiveList<PlanShape>()(['rectangle', 'ellipse'])
 
 export const FACADE_SYSTEMS = exhaustiveList<FacadeSystem>()([
   'exposed',
@@ -223,6 +226,49 @@ export const CP_LEEWARD_TABLE: ReadonlyArray<readonly [ratio: number, cp: number
   [2.0, 0.3],
   [4.0, 0.2],
 ]
+
+/**
+ * Force coefficient Cf for a building of round cross-section, keyed on the
+ * whole-building slenderness h/D.
+ *
+ * ASCE 7-16 Table 29.4-1 ("Other Structures"), round cross-section, moderately
+ * smooth surface, in the high-Reynolds branch D*sqrt(qz) > 5.3 (SI; the table
+ * states 2.5 in imperial units) — which every building at these sizes and wind
+ * speeds is in:
+ *
+ *   h/D  1   ->  0.5
+ *   h/D  7   ->  0.6
+ *   h/D  25  ->  0.7
+ *
+ * Linear interpolation between, clamped outside, the same treatment the Kz
+ * table gets.
+ *
+ * WHY THIS IS THE LESSON. The rectangular path in `wind.ts` builds Cf out of
+ * the windward and leeward pressure coefficients and lands on 1.3 for a squat
+ * square plan, which is the value Table 29.4-1 gives for a square section too —
+ * so the two families are consistent, and a round building of the same size
+ * genuinely catches roughly half the along-wind force. That is not a modelling
+ * convenience; it is why chimneys and towers are round.
+ *
+ * NOT MODELLED, and it is the honest edge of this: across-wind vortex shedding,
+ * which is what actually governs a slender round tower. The engine has no
+ * across-wind case at all (see the `wind.ts` header), so a round plan here only
+ * ever helps. `analyze()` warns on a slender ellipse for that reason.
+ */
+export const CF_ROUND_TABLE: ReadonlyArray<readonly [slenderness: number, cf: number]> = [
+  [1, 0.5],
+  [7, 0.6],
+  [25, 0.7],
+]
+
+/**
+ * Above this height-to-diameter ratio a round plan is in the regime where
+ * across-wind vortex shedding, which this engine does not model, would normally
+ * govern. Chosen as the point where ASCE 7-16 C26.11 and the general literature
+ * put crosswind response on a par with along-wind for circular sections; it is
+ * a warning threshold, not a coefficient, and nothing computes with it.
+ */
+export const ROUND_CROSSWIND_SLENDERNESS_LIMIT = 5
 
 /**
  * Velocity pressure exposure coefficient Kz. ASCE 7-16 Table 26.10-1, Case 2,

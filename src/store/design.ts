@@ -16,9 +16,11 @@ import { create } from 'zustand'
 import {
   ANCHOR_CAPACITY_LIMITS_KN,
   clamp,
+  EMBEDMENT_DEPTH_LIMITS_M,
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
   STOREY_COUNT_LIMITS,
+  STOREY_HEIGHT_LIMITS_M,
   TAPER_LIMITS,
 } from '@/lib/limits.ts'
 import type { SavedDesign } from '@/persistence'
@@ -26,12 +28,14 @@ import type {
   ExposureCategory,
   FacadeSystem,
   LateralSystem,
+  PlanShape,
   Storey,
   Structure,
   Typology,
   WindHazard,
 } from '@/engine'
 import { archetype, structureFor } from '@/lib/typology.ts'
+import type { Blueprint } from '@/ai/blueprint/parse.ts'
 
 /**
  * Starting point: a mid-rise CLT block. Chosen because it sits in the
@@ -51,6 +55,7 @@ export const DEFAULT_STRUCTURE: Structure = {
     materialId: 'cross-laminated-timber',
     lateralSystem: 'shear-wall' as const,
     facade: 'punched' as const,
+    planShape: 'rectangle' as const,
   })),
   foundation: { type: 'raft', embedmentDepth_m: 1.5, anchorCapacity_kN: 600 },
   exposureCategory: 'C',
@@ -117,7 +122,27 @@ export interface DesignState {
 
   addStorey: () => void
   removeStorey: () => void
-  setPlanDimensions: (widthX_m: number, widthY_m: number) => void
+  /**
+   * Size the plan. With no storey selected this sets the *ground* storey and the
+   * taper spreads it up the stack; with one selected it sizes that storey alone.
+   *
+   * The same "selection is the target" idiom the material, system and envelope
+   * controls already use, extended to shape. A `Storey` has always carried its
+   * own width and the engine has always read it per storey — what was missing
+   * was a way to say so with a slider, which is why every design used to be a
+   * prism or a cone and nothing else.
+   */
+  setPlanDimensions: (widthX_m: number, widthY_m: number, index?: number) => void
+
+  /**
+   * Floor-to-floor height, on every storey or on the selected one.
+   *
+   * It exists at all because storey count is not a height control — a one-storey
+   * arena and a three-storey office can want the same 24 m and mean completely
+   * different buildings. Per-storey because that is what a hall with offices
+   * over it *is*: one tall volume and some ordinary floors.
+   */
+  setStoreyHeight: (height_m: number, index?: number) => void
   setAnchorCapacity: (anchorCapacity_kN: number) => void
 
   /** Regenerate every storey's plan from the ground storey and this taper. */
@@ -133,6 +158,34 @@ export interface DesignState {
    * consequence is that the roof form persists too.
    */
   setTypology: (typology: Typology) => void
+
+  /**
+   * Replace the design with one the AI proposed from a description.
+   *
+   * The same kind of write as `setTypology`: a starting point, not a mode.
+   * Nothing downstream can tell a blueprint from an archetype or from a design
+   * built by hand — it is storeys, a foundation and an exposure — so every
+   * control still works on it afterwards and `analyze()` scores it the same way.
+   * What arrives here has already been through `parseBlueprint`, which checked
+   * every id against the real library and pulled every number into the editing
+   * limits; the clamps below are the same belt-and-braces `structureFor` keeps.
+   *
+   * The hazard is deliberately untouched. The storm is the student's half of the
+   * exercise, and a proposal that also turned the wind up would change two
+   * things at once and make the first reading unattributable.
+   */
+  applyBlueprint: (blueprint: Blueprint) => void
+
+  /**
+   * Rectangle or ellipse, on one storey or on all of them.
+   *
+   * A real change of design, not a change of drawing: the engine reads the
+   * footprint for floor area, envelope area, the face the wind meets, the
+   * section the storey bends over and the force coefficient. A round tower is
+   * lighter, cheaper, lower-carbon, less stiff and catches roughly half the
+   * wind — every one of those from `analyze()`, none of them from here.
+   */
+  setPlanShape: (planShape: PlanShape, index?: number) => void
 
   setStoreyMaterial: (index: number, materialId: string) => void
   setStoreySystem: (index: number, lateralSystem: LateralSystem) => void
@@ -235,14 +288,50 @@ export function deriveTaper(structure: Structure): number {
   return clamp(1 - top.widthX_m / base.widthX_m, TAPER_LIMITS)
 }
 
-/** Re-apply the current taper after the storey count changes. */
-function retaper(structure: Structure, taper: number): Structure {
+/**
+ * Whether every storey's plan is still what (ground storey, taper) generates.
+ *
+ * The question `retaper` has to ask before it acts. A stack that the taper
+ * control produced should stay a taper when a floor is added — a tapered tower
+ * growing a straight extension looks like a bug. A stack the student shaped
+ * storey by storey must not be regenerated at all, because that would silently
+ * throw their work away on the next press of "Add".
+ *
+ * Compared at the precision the widths are stored to, so a re-derived taper that
+ * rounds a millimetre differently still counts as generated.
+ */
+function isGeneratedTaper(structure: Structure, taper: number): boolean {
   const base = structure.storeys[0]
-  if (base === undefined) return structure
+  if (base === undefined) return true
+  const generated = withTaperedPlan(structure, base.widthX_m, base.widthY_m, taper)
+  return structure.storeys.every((storey, i) => {
+    const want = generated.storeys[i]
+    return (
+      want !== undefined &&
+      Math.abs(storey.widthX_m - want.widthX_m) <= 0.05 &&
+      Math.abs(storey.widthY_m - want.widthY_m) <= 0.05
+    )
+  })
+}
+
+/**
+ * Re-apply the current taper across a changed storey count.
+ *
+ * `wasGenerated` is read from the stack as it was *before* the count changed,
+ * because the changed one never matches — a copy of the top storey is by
+ * definition not what a taper over one more floor would produce.
+ */
+function retaper(
+  structure: Structure,
+  taper: number,
+  wasGenerated: boolean,
+): Structure {
+  const base = structure.storeys[0]
+  if (base === undefined || !wasGenerated) return structure
   return withTaperedPlan(structure, base.widthX_m, base.widthY_m, taper)
 }
 
-export const useDesignStore = create<DesignState>()((set) => ({
+export const useDesignStore = create<DesignState>()((set, get) => ({
   structure: DEFAULT_STRUCTURE,
   hazard: DEFAULT_HAZARD,
   baseline: STARTING_BASELINE,
@@ -289,6 +378,7 @@ export const useDesignStore = create<DesignState>()((set) => ({
         structure: retaper(
           { ...state.structure, storeys: [...storeys, { ...top }] },
           state.taper,
+          isGeneratedTaper(state.structure, state.taper),
         ),
       }
     }),
@@ -298,8 +388,13 @@ export const useDesignStore = create<DesignState>()((set) => ({
       const storeys = state.structure.storeys
       if (storeys.length <= STOREY_COUNT_LIMITS.min) return state
       const next = storeys.slice(0, -1)
+      const wasGenerated = isGeneratedTaper(state.structure, state.taper)
       return {
-        structure: retaper({ ...state.structure, storeys: next }, state.taper),
+        structure: retaper(
+          { ...state.structure, storeys: next },
+          state.taper,
+          wasGenerated,
+        ),
         // Keep the selection pointing at a storey that still exists.
         selectedStoreyIndex:
           state.selectedStoreyIndex !== null &&
@@ -309,16 +404,42 @@ export const useDesignStore = create<DesignState>()((set) => ({
       }
     }),
 
-  // The sliders set the *ground* storey; the taper spreads that up the stack.
-  setPlanDimensions: (widthX_m, widthY_m) =>
-    set((state) => ({
-      structure: withTaperedPlan(
-        state.structure,
-        clamp(widthX_m, PLAN_WIDTH_LIMITS_M),
-        clamp(widthY_m, PLAN_WIDTH_LIMITS_M),
-        state.taper,
-      ),
-    })),
+  setPlanDimensions: (widthX_m, widthY_m, index) =>
+    set((state) => {
+      const widths = {
+        widthX_m: clamp(round1(widthX_m), PLAN_WIDTH_LIMITS_M),
+        widthY_m: clamp(round1(widthY_m), PLAN_WIDTH_LIMITS_M),
+      }
+      if (index === undefined) {
+        // No selection: the slider sets the ground storey and the taper spreads
+        // it up the stack, which is what it has always done.
+        return {
+          structure: withTaperedPlan(
+            state.structure,
+            widths.widthX_m,
+            widths.widthY_m,
+            state.taper,
+          ),
+        }
+      }
+      // One storey: the stack stops being a clean linear taper, so the taper
+      // control is re-read off the result rather than left claiming a shape the
+      // building no longer has. Same treatment `loadDesign` gives a design it
+      // did not generate, and the next drag of the control imposes a taper again.
+      const structure = withStorey(state.structure, index, widths)
+      return { structure, taper: deriveTaper(structure) }
+    }),
+
+  setStoreyHeight: (height_m, index) =>
+    set((state) => {
+      const change = { height_m: clamp(height_m, STOREY_HEIGHT_LIMITS_M) }
+      return {
+        structure:
+          index === undefined
+            ? withAllStoreys(state.structure, change)
+            : withStorey(state.structure, index, change),
+      }
+    }),
 
   setTaper: (taper) =>
     set((state) => {
@@ -362,6 +483,77 @@ export const useDesignStore = create<DesignState>()((set) => ({
       taper: 0,
     })
   },
+
+  applyBlueprint: (blueprint) => {
+    // Truncated rather than refused if a future parser ever hands over more than
+    // the controls hold; the parser already caps it, and this is the same
+    // belt-and-braces `structureFor` keeps.
+    const proposed = blueprint.storeys.slice(0, STOREY_COUNT_LIMITS.max)
+    const structure: Structure = {
+      typology: blueprint.typology,
+      storeys: proposed.map((storey) => ({
+        ...storey,
+        height_m: clamp(storey.height_m, STOREY_HEIGHT_LIMITS_M),
+        widthX_m: clamp(storey.widthX_m, PLAN_WIDTH_LIMITS_M),
+        widthY_m: clamp(storey.widthY_m, PLAN_WIDTH_LIMITS_M),
+      })),
+      foundation: {
+        type: blueprint.foundationType,
+        embedmentDepth_m: clamp(blueprint.embedmentDepth_m, EMBEDMENT_DEPTH_LIMITS_M),
+        anchorCapacity_kN: clamp(
+          blueprint.anchorCapacity_kN,
+          ANCHOR_CAPACITY_LIMITS_KN,
+        ),
+      },
+      exposureCategory: blueprint.exposureCategory,
+    }
+    // A taper is a rule about how *one* plan changes with height, so it only
+    // applies to a proposal that is one plan. A stack of sections — a hall with
+    // tiers over it — already carries its own shape, and regenerating its widths
+    // from the ground storey would flatten the thing the model was asked for.
+    const ground = structure.storeys[0]
+    const uniformPlan = structure.storeys.every(
+      (storey) =>
+        storey.widthX_m === ground?.widthX_m && storey.widthY_m === ground?.widthY_m,
+    )
+    const taper = uniformPlan ? clamp(blueprint.taper, TAPER_LIMITS) : 0
+    // Widths are generated here rather than carried in the blueprint, so there
+    // is one implementation of "a taper becomes per-storey widths".
+    const tapered = uniformPlan
+      ? withTaperedPlan(
+          structure,
+          ground?.widthX_m ?? PLAN_WIDTH_LIMITS_M.min,
+          ground?.widthY_m ?? PLAN_WIDTH_LIMITS_M.min,
+          taper,
+        )
+      : structure
+    set({
+      structure: tapered,
+      // For a sectioned stack this is the closest linear read of what is on
+      // screen, the same thing `loadDesign` shows for a design it did not
+      // generate — the control has to describe something, and 0 would be a lie.
+      taper: uniformPlan ? taper : deriveTaper(tapered),
+      selectedStoreyIndex: null,
+      // The proposal becomes the thing the student's own edits are measured
+      // against, exactly as opening a saved design does: after starting from a
+      // generated arena the useful question is "what did *my* changes do", not
+      // "how does this differ from a CLT block they never asked for". The same
+      // structure object goes into both, so the first reading shows no deltas.
+      baseline: {
+        label: blueprint.name,
+        structure: tapered,
+        hazard: get().hazard,
+      },
+    })
+  },
+
+  setPlanShape: (planShape, index) =>
+    set((state) => ({
+      structure:
+        index === undefined
+          ? withAllStoreys(state.structure, { planShape })
+          : withStorey(state.structure, index, { planShape }),
+    })),
 
   setStoreyMaterial: (index, materialId) =>
     set((state) => ({ structure: withStorey(state.structure, index, { materialId }) })),

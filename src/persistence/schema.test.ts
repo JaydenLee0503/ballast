@@ -59,7 +59,7 @@ describe('round trip', () => {
 describe('version', () => {
   it('refuses a version it does not know, naming what it can read', () => {
     expect(() => parse(corrupt((d) => { d['schemaVersion'] = 99 })))
-      .toThrow(/unsupported schemaVersion 99.*1, 2 and 3/s)
+      .toThrow(/unsupported schemaVersion 99.*1, 2, 3 and 4/s)
   })
 
   it('refuses a missing version rather than assuming the current one', () => {
@@ -98,7 +98,7 @@ describe('migrating a version-1 design', () => {
         ...DEFAULT_STRUCTURE,
         storeys: DEFAULT_STRUCTURE.storeys.map((storey) => ({
           ...storey,
-          facade: 'exposed' as const,
+          facade: 'exposed' as const, planShape: 'rectangle',
         })),
       },
       DEFAULT_HAZARD,
@@ -215,6 +215,7 @@ describe('shape', () => {
     ])
     expect(Object.keys((parsed.structure as any).storeys[0])).toEqual([
       'height_m', 'widthX_m', 'widthY_m', 'materialId', 'lateralSystem', 'facade',
+      'planShape',
     ])
   })
 })
@@ -270,6 +271,46 @@ describe('migrating a version-2 design', () => {
     const raw = corrupt((d) => {
       d['schemaVersion'] = 2
       d['structure']['typology'] = 'stadium'
+    })
+    expect(() => parse(raw)).toThrow(DesignParseError)
+  })
+})
+
+/**
+ * Version 3 had no footprint, because every plan in the engine was a rectangle.
+ * A round plan changes the floor area, the envelope, the wind load and the
+ * section all at once, so defaulting an old design to one would rewrite its
+ * safety factor and its carbon for a shape nobody chose. It migrates to
+ * 'rectangle', which is what it was.
+ */
+describe('migrating a version-3 design', () => {
+  const version3 = () =>
+    corrupt((d) => {
+      d['schemaVersion'] = 3
+      for (const storey of d['structure']['storeys']) delete storey['planShape']
+    })
+
+  it('accepts it and stamps it as current', () => {
+    expect(parse(version3()).schemaVersion).toBe(DESIGN_SCHEMA_VERSION)
+  })
+
+  it('gives it the rectangle it always had', () => {
+    for (const storey of parse(version3()).structure.storeys) {
+      expect(storey.planShape).toBe('rectangle')
+    }
+  })
+
+  it('scores it exactly as version 3 did', () => {
+    const migrated = parse(version3())
+    const before = analyze(DEFAULT_STRUCTURE, DEFAULT_HAZARD, MATERIAL_LIBRARY)
+    const after = analyze(migrated.structure, migrated.hazard, MATERIAL_LIBRARY)
+    expect(after.scoreCard).toEqual(before.scoreCard)
+  })
+
+  it('still rejects a footprint it does not recognise', () => {
+    const raw = corrupt((d) => {
+      d['schemaVersion'] = 3
+      d['structure']['storeys'][0]['planShape'] = 'hexagon'
     })
     expect(() => parse(raw)).toThrow(DesignParseError)
   })

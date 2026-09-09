@@ -22,6 +22,12 @@
  * note the student can ignore; a false negative is a fabricated safety factor
  * presented as fact, so the detectors lean strict.
  *
+ * TWO CALLERS, ONE SET OF DETECTORS. `findUntraceableFigures` checks a critique
+ * against the engine facts it was given; `findUnbackedFigures` is the same
+ * machinery pointed at any prose and any object of figures, which is how
+ * `ai/blueprint/parse.ts` catches a proposed design that helpfully predicts its
+ * own safety factor. A second implementation would be a second thing to weaken.
+ *
  * Pure and import-free apart from types.
  */
 
@@ -273,15 +279,29 @@ function critiqueText(critique: Critique): string {
   ].join('\n')
 }
 
-export function findUntraceableFigures(
-  critique: Critique,
-  context: CritiqueContext,
+/**
+ * The general form: prose in, plus whatever object holds the figures that prose
+ * is allowed to quote, and out come the ones that trace back to nothing.
+ *
+ * Exported because the critique is not the only place a model writes prose about
+ * numbers. `ai/blueprint/parse.ts` runs a proposed design's own explanation
+ * through here against the inputs it proposed, so a blueprint that helpfully
+ * predicts "a safety factor of about 2" is caught by exactly the same detectors
+ * that catch it in a critique — one home for the checking, two callers.
+ *
+ * `source` is walked for numbers by field name, so it must follow the project's
+ * unit-suffix convention; a field without a unit lands in an unmatchable bucket
+ * and can excuse nothing. See `bucketForKey`.
+ */
+export function findUnbackedFigures(
+  text: string,
+  source: unknown,
 ): UntraceableFigure[] {
-  const byBucket = collectByBucket(context)
+  const byBucket = collectByBucket(source)
   const seen = new Set<string>()
   const untraceable: UntraceableFigure[] = []
 
-  for (const figure of detect(critiqueText(critique))) {
+  for (const figure of detect(text)) {
     if (!Number.isFinite(figure.value)) continue
     const candidates = UNMATCHABLE.has(figure.bucket)
       ? []
@@ -295,4 +315,11 @@ export function findUntraceableFigures(
   }
 
   return untraceable
+}
+
+export function findUntraceableFigures(
+  critique: Critique,
+  context: CritiqueContext,
+): UntraceableFigure[] {
+  return findUnbackedFigures(critiqueText(critique), context)
 }

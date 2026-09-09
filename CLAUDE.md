@@ -30,8 +30,14 @@ Why this is non-negotiable:
   toy. The deterministic engine is the thing worth showing a judge.
 
 The AI layer's legitimate jobs: explaining *why* a storey is red, proposing
-design changes to try, narrating the tradeoff between the three dials, and
-turning a ScoreCard into prose a first-year student understands.
+design changes to try, narrating the tradeoff between the three dials, turning a
+ScoreCard into prose a first-year student understands — and one more that looks
+like an exception and is not: **choosing the inputs of a starting point** when a
+student describes a building in words (`ai/blueprint/`). Those numbers are
+slider positions, not results. They are visible on the controls, editable by
+hand, and everything derived from them still comes from `analyze()`. "The model
+said 24 m wide" is a design decision a student can see and change; "the model
+said 1.4" is a structural claim, and that is still forbidden.
 
 And the rule is not left to the prompt alone. `ai/guard.ts` re-reads every
 reply and flags any figure that does not trace back to the context the model
@@ -49,6 +55,7 @@ src/
     data/
       materials.json   seed library, one `sources` citation per number
     materials.ts       library loading + validation
+    plan.ts            footprint geometry: area, perimeter, silhouette, section
     wind.ts            ASCE 7-style wind loads
     drift.ts           storey stiffness and drift
     stability.ts       overturning, sliding, per-storey bending
@@ -82,6 +89,7 @@ src/
     StoreyTooltip.tsx  the hover card over a storey in the 3D view
     DesignControls.tsx every slider and select, as Basic + Advanced
     SavedDesigns.tsx   save, reopen, share
+    BlueprintPanel.tsx describe a building; shows what was clamped and what is missing
   ai/
     types.ts           CritiqueContext + Critique. no imports, by design
     context.ts         AnalysisResult -> the facts the model may see
@@ -89,6 +97,12 @@ src/
     parse.ts           tolerant JSON extraction from the reply
     guard.ts           flags figures that do not trace back to the context
     client.ts          POSTs to /api/critique, then parses and guards
+    blueprint/         "describe a building and get one". the model writes INPUT
+      types.ts         the wire shapes + the fixed caveat table. no imports
+      catalogue.ts     the ids and ranges the model may pick from
+      prompt.ts        the system rules + the catalogue, as messages
+      parse.ts         reply -> a checked, clamped Blueprint. or a refusal
+      client.ts        POSTs to /api/blueprint, then parses
   lib/
     orbit.ts           rigid camera rotation about an arbitrary pivot
     facade.ts          human names for the envelope systems. copy only
@@ -97,7 +111,9 @@ src/
     format.ts          display formatting only; no arithmetic that means anything
     limits.ts          editing bounds, shared by the controls and the parser
 plugins/
-  critiqueApi.ts       /api/critique on the dev + preview server. holds the key
+  aiProvider.ts        the one place the key is used. shared by both routes
+  critiqueApi.ts       /api/critique on the dev + preview server
+  blueprintApi.ts      /api/blueprint, the same, for a design to start from
   (later) persistence/supabase.ts   a second DesignLibrary, behind auth
 ```
 
@@ -162,7 +178,9 @@ documented in situ; this is the index.
 | Rigid building, `G = 0.85` | `constants.ts` `G_GUST_EFFECT` | Wrong above ~15 storeys; `analyze()` warns |
 | Flat site, `Kzt = 1.0` | `constants.ts` `KZT_TOPOGRAPHIC` | No topographic speed-up modelled |
 | `exposureCategory` governs Kz; `terrainRoughness` is only a consistency check | `wind.ts` `checkRoughnessConsistency` | Keeps Kz traceable to one ASCE clause instead of an invented blend |
-| Only along-wind load case | `wind.ts` header | No across-wind or torsional cases |
+| Only along-wind load case | `wind.ts` header | No across-wind or torsional cases — which is why a round plan can only ever look safer here, and `analyze()` warns on a slender one |
+| A round plan is an ellipse, and every shape-dependent quantity asks | `plan.ts` | Area `pi/4`, perimeter by Ramanujan II, exact silhouette, section `pi B L^2/32`, and Cf from a different clause |
+| Round Cf from ASCE 7-16 Table 29.4-1, keyed on the *building's* h/D | `constants.ts` `CF_ROUND_TABLE` | 0.5 to 0.7 against a rectangle's 1.3: the single biggest effect any one control has on load |
 | Structural self-weight only; no superimposed dead or live load | `stability.ts` | Conservative for overturning, and it is what makes the slenderness lesson land |
 | Section modulus smears material across the plan | `stability.ts` `effectiveSectionModulus_m3` | Conservative by ~2x; fine for relative utilisation, not for member sizing |
 | Carbon is A1-A3, frame + envelope, no sequestration | `sustainability.ts` header | A whole-building figure would still be much higher |
@@ -170,6 +188,47 @@ documented in situ; this is the index.
 | Facade rates are assembly archetypes, not EPDs | `constants.ts` `FACADE` | 3x differences are real, 10% ones are noise. Warned on every analysis that uses one |
 | Facade area is perimeter x height, no roof | `sustainability.ts` `facadeArea_m2` | A slab block pays for more skin than a square one of the same floor area |
 | Costs are indicative, not surveyed | `data/materials.json` | Flagged as a warning on every analysis. The weakest data in the project |
+
+---
+
+## Footprints
+
+`Storey.planShape` is `'rectangle' | 'ellipse'`, and it is a **real input**, not
+a rendering option. Five separate quantities ask it, and they all live in
+`plan.ts` so they cannot disagree:
+
+| | rectangle | ellipse |
+|---|---|---|
+| plan area (floor, material, stiffness) | `X Y` | `pi/4 X Y` |
+| perimeter (envelope area) | `2(X+Y)` | Ramanujan II |
+| silhouette at bearing t | `X\|sin t\| + Y\|cos t\|` | `2 sqrt(a^2 sin^2 t + b^2 cos^2 t)`, exact |
+| section modulus | `B L^2 / 6` | `pi B L^2 / 32` |
+| force coefficient | Cp windward + leeward, Fig. 27.3-1 | Table 29.4-1, on h/D |
+
+`widthX_m` and `widthY_m` are the full plan dimensions for both — for an ellipse
+they are its axes, the box it is inscribed in — so the same two sliders describe
+both shapes and switching is a change of shape, not of size.
+
+**A 20 m concrete tower, ten storeys, at 160 km/h, rectangle then round:** base
+shear 870 → 343 kN, carbon 839 → 659 t, drift h/886 → h/1765, safety factor
+17.4 → 35.1. Every one of those follows from the table above, and that is the
+lesson — it is why chimneys, silos and cooling towers are round.
+
+**The honest edge.** This engine has no across-wind case at all, and vortex
+shedding is what actually governs a slender round tower. So an ellipse here can
+only ever make a design look better, which is exactly the shape of error worth
+warning about: past `ROUND_CROSSWIND_SLENDERNESS_LIMIT` (h/D of 5) `analyze()`
+says so, in those words.
+
+**Two clauses, kept apart.** The rectangular Cf is built from pressure
+coefficients; the round one is read straight off a force-coefficient table. They
+agree at about 1.3 for a squat square plan, which `wind.test.ts` checks as a
+consistency property — but neither is derived from the other, and a third shape
+would need its own clause rather than an interpolation between these two.
+
+**Still not a curved structure.** An arch, a vault and a dome carry load along a
+curve into abutments, and there is no such load path here. An elliptical storey
+is a vertical cantilever with a different cross-section, and nothing more.
 
 ---
 
@@ -216,7 +275,77 @@ other OpenAI-compatible provider is a `FEATHERLESS_BASE_URL` change.
 production server. Deploying means moving those three steps -- build messages,
 call provider, return text -- into a serverless or edge function.
 `buildMessages` is pure and shared, so that is a transport change and nothing
-else.
+else. `/api/blueprint` is the same shape, and both go through
+`plugins/aiProvider.ts`, so the key is read once and the two routes cannot drift
+apart on timeouts or on passing the provider's own error text through.
+
+### Describing a building
+
+`ai/blueprint/` is the second half of the AI layer, pointed the other way. A
+student types "an arena" and gets a design to start from: storeys, plan,
+material, lateral system, envelope, foundation, exposure. It is the same kind of
+write as picking an archetype chip -- `applyBlueprint` produces an ordinary
+`Structure`, `analyze()` cannot tell it from a hand-built one, and every control
+still works on it afterwards.
+
+Four things keep it inside the one rule.
+
+**The model picks from a catalogue, not from memory.** `catalogue.ts` sends the
+real material ids, the real lateral systems and envelopes, and the real editing
+bounds out of `lib/limits.ts`. A new material in `data/materials.json` becomes
+proposable with no change here, and the model is never told it may ask for
+something a slider cannot express.
+
+**Reject where a default would be an invention; clamp where a control would.**
+`persistence/` says "reject, don't repair", because a saved design is a *record*
+of what somebody built. A blueprint is not a record of anything -- it is a
+suggested slider position, and the student is looking at the sliders. So an
+unknown material, system, envelope or foundation is refused **by name**, a
+missing dimension is refused (clamping an absent storey count to 1 would hand
+back a building nobody asked for), and a number outside the limits is pulled to
+the edge with the adjustment *shown on screen*. Exposure and typology are the
+only fallbacks, because 'C' and 'custom' are defaults this codebase already
+documents as honest.
+
+**The caveats are ours, and the request sets a floor under them.** The engine
+has no long-span element, no uplift case, no cantilever, no curved plan, no
+internal void and no live load -- which is exactly why `lib/typology.ts` refuses
+a stadium archetype. Letting the model write its own disclaimer would let it
+write a reassuring one, so it may only cite ids from `BLUEPRINT_CAVEATS` and the
+app prints the fixed sentence. On top of that, `requiredCaveats()` reads the
+student's own words and adds the ones the request implies whether the model
+admitted them or not: ask for an arena and you are told about the roof, the
+uplift and the crowd even if the reply mentioned none of them.
+
+**The prose goes through the same guard.** `findUnbackedFigures` is the general
+form of the critique guard; a proposal is checked against the inputs it
+proposed, so "this will reach a safety factor of 2.4" comes back flagged instead
+of reading as a result. There is one set of detectors, with two callers.
+
+**A proposal may be round.** `planShape` is in the catalogue like any other id,
+described by what it does rather than by its geometry, and a section can set its
+own — so "a tower on a podium" can come back as a square base under a round
+shaft. A missing footprint falls back to `'rectangle'`, the same honest default
+`persistence/` migrates an old design to.
+
+**A proposal may be more than one shape.** `sections` describes the building as
+parts, ground up — `{count, height_m, widthX_m, widthY_m}`, plus an optional
+material, system or envelope — so an arena comes back as an 8 m hall with two 4 m
+tiers over it rather than three averaged boxes. Each section inherits whatever it
+omits from the top-level fields, which stay required precisely so there is always
+something to inherit; the counts are capped at `STOREY_COUNT_LIMITS.max` and
+truncated from the top, because the lower storeys are the loaded ones. A
+`Blueprint` therefore carries a resolved `Storey[]`, which is what `Structure`
+has always held, and `applyBlueprint` has nothing left to convert. The taper is
+applied only when every proposed storey shares a plan: a taper is a rule about
+how *one* plan changes with height, and running it over a sectioned stack would
+flatten the thing the model was asked for. For a sectioned stack the control
+instead shows the closest linear read of what is on screen, exactly as
+`loadDesign` does.
+
+What it deliberately does not do: touch the hazard (the storm is the student's
+half of the exercise), or invent a roof form -- an arena is `'custom'`, which
+draws the flat top the engine can justify.
 
 ---
 
@@ -254,6 +383,14 @@ a carbon figure for cladding they never chose, which is the same failure as
 substituting an unknown material, only quieter. Re-saving stamps version 2 and
 the choice becomes theirs. `schema.test.ts` pins all of that, including that
 the migrated design scores identically to how version 1 scored it.
+
+**Schema 4 added `Storey.planShape`, and 1, 2 and 3 all still load.** A version-3
+design had no footprint because every plan in the engine was a rectangle, so it
+migrates to `'rectangle'` — and reads back with exactly the numbers it was saved
+with, which is the property `schema.test.ts` pins. Defaulting to an ellipse would
+rewrite a saved design's floor area, envelope, wind load, stiffness and safety
+factor at once, for a shape the student never chose: the same failure as
+substituting an unknown material, at five times the blast radius.
 
 **One set of bounds.** `lib/limits.ts` holds the editing limits, and both the
 controls and the parser read them. If persistence had its own numbers, a saved
@@ -376,6 +513,26 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   one lightness apart. Fills — the dial bars, the legend swatches — still use
   the raw hex, because those have to read as the same colour as the storey they
   describe.
+- **Floor count and floor height are separate controls.** Storey count used to
+  be the only way to make a building taller, which is fine while every design is
+  a stack of dwellings and wrong the moment one is a single volume — a hall, a
+  warehouse, an arena.
+- **Selection is the target, for shape as well as for material.** Height, width
+  and depth act on the selected storey and on the whole stack when nothing is
+  selected — the idiom the material, system and envelope controls already used.
+  `Storey` has always carried its own height and widths and the engine has
+  always read them per storey; what was missing was a way to *say* so, which is
+  why every design used to be a prism or a cone and nothing else. A hall with
+  offices over it is now expressible, and it is expressible as what it is: two
+  differently sized boxes, not one averaged one.
+- **A taper is a whole-stack rule, and it says so.** It regenerates every width
+  from the ground storey, so it replaces any floor sized on its own. The note
+  under the slider tells the student that rather than the control silently
+  undoing their work. The complement of that is `isGeneratedTaper`: adding or
+  removing a floor re-applies the taper only to a stack the taper actually
+  generated, because re-applying it to a hand-shaped stack would throw the
+  shaping away on the next press of "Add". The flag is read *before* the count
+  changes, since the changed stack never matches by construction.
 - **The taper is an input, not a second copy of the widths.** `Structure`
   stores per-storey plans and always has; the engine has always read them and a
   saved design round-trips them exactly. The store keeps the *shape control*
@@ -396,6 +553,12 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   the tabs, so whichever is open the reading of the design is on screen — and
   the modelling caveats show under both control tabs, because "you are past
   where this model is accurate" is the sentence a beginner most needs.
+- **The footprint chips are the shape control, and they change the physics.**
+  Rectangle or round, on the selected storey or on all of them. The blurb under
+  them names the consequence rather than the geometry ("the wind slides around
+  it"), because the consequence is the lesson. A round storey is drawn as a
+  48-sided drum built at its real dimensions — not a unit cylinder the mesh
+  scales, because the window shader reads vertex positions in metres.
 - **Windows are model, not decoration.** A storey's window-to-wall ratio is a
   field of `Storey`; the engine charges carbon, money and weight for it; and
   the panes on screen cover exactly that fraction of the wall, because
@@ -405,7 +568,19 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   rounded from the face width, so both elevations of a box get whole windows
   edge to edge — the thing a fixed metre grid gets visibly wrong at corners.
   One shader for the student's tower and the neighbourhood both, so a glazed
-  tower and a glazed office block read as the same kind of object.
+  tower and a glazed office block read as the same kind of object. A round
+  storey has one continuous elevation instead of four faces, so the shader sets
+  it out against the *perimeter* — `planPerimeter_m`, the same function that
+  charges the facade for its area — using the ellipse's own parameter `t` as the
+  horizontal coordinate. Bays are then even in `t` and slightly uneven in
+  metres, which is harmless: a pane still fills `sqrt(ratio)` of whatever bay it
+  is in, so the fraction of wall it covers is the ratio everywhere. The bay
+  count is an integer, so the wrap-around seam lands on a bay boundary.
+- **A round building gets no roof cap.** A gable, a shed and a parapet are
+  rectangular objects, and there is no honest round version of them — a hipped
+  drum roof is a shape the engine has nothing to say about. So an elliptical top
+  storey falls back to the flat top, which is what the viewport has always drawn
+  when it has no roof it can justify.
 - **Utilisation still owns the colour.** Panes are a cool *tint* of the band
   colour rather than a colour of their own, so a red storey with a lot of glass
   is unmistakably still a red storey. The facade control does not get to
@@ -596,7 +771,17 @@ The engine is the part that must not rot, so it is the part with tests.
   monotonic in gust speed, `V^2` scaling, overturning safety monotonic in base
   width.
 - `wind.test.ts` checks the hand-transcribed ASCE Kz table against the power
-  law it discretises, so a typo cannot survive.
+  law it discretises, so a typo cannot survive. It also pins the round force
+  coefficient at its three tabulated points, and the consistency property that a
+  squat square plan comes out at 1.3 from either clause.
+- `plan.test.ts` checks the footprint geometry against the closed forms it
+  claims: `pi r^2` for a circle, `2 pi r` for its perimeter, and — the one worth
+  having — the elliptical perimeter against a numerically integrated ellipse at
+  four aspect ratios, including the 15:1 extreme the limits allow. It also holds
+  the reason the code uses Ramanujan's *second* approximation rather than his
+  first, by measuring both. An error here would surface as a carbon figure, a
+  wind force, a stiffness and a safety factor all wrong together and all
+  plausible.
 - A material with an unresolved `TODO` (null) throws rather than scoring as
   zero. A missing carbon figure must never make the least-documented material
   look like the greenest one.
@@ -611,6 +796,18 @@ The engine is the part that must not rot, so it is the part with tests.
   shear.
 - `ai/prompt.test.ts` asserts the hard rules are still in the system prompt,
   so softening them fails the suite rather than quietly changing behaviour.
+  `ai/blueprint/prompt.test.ts` does the same for the blueprint's rules, and
+  checks the catalogue really carries every material id and every caveat.
+- `ai/blueprint/parse.test.ts` is the attacker framing again, applied to a
+  design the model proposes: an invented material, an absent dimension, forty
+  storeys, a predicted safety factor in the prose, a caveat id this build has no
+  text for, a section that is a sentence rather than an object, sections adding
+  up to more floors than exist. It closes with the property the module exists
+  for -- anything the parser accepts, `analyze()` can run.
+- `store/design.test.ts` covers the two things in the store that are behaviour
+  rather than assignment: the baseline, and shape. That now includes sizing one
+  storey, the taper being re-read off a stack it did not generate, and "Add"
+  refusing to flatten a hand-shaped one.
 - `persistence/schema.test.ts` is the same attacker framing applied to stored
   data: wrong schema version, unknown material, absurd dimensions, a numeric
   string, a hazard kind from a future build. It closes with the property the
@@ -637,9 +834,12 @@ The engine is the part that must not rot, so it is the part with tests.
    localStorage, and share links that carry a design in the URL.
 6. Supabase — auth, and a second `DesignLibrary` so designs follow an account
    between browsers. The interface it has to satisfy already exists.
+7. **Described buildings** (done) — `ai/blueprint/`: a sentence in, a checked
+   starting point out, with what was clamped and what the engine cannot
+   represent printed beside it. See "Describing a building" above.
 
-Also outstanding: a production transport for `/api/critique`, and streaming
-(the reply currently arrives in one go).
+Also outstanding: a production transport for `/api/critique` and
+`/api/blueprint`, and streaming (the reply currently arrives in one go).
 
 Known and accepted: the production bundle is ~1.1 MB (three.js). Code-split it
 only if load time actually becomes a problem.

@@ -26,16 +26,17 @@ import {
   FACADE,
   KZ_HEIGHTS_M,
   RIGID_BUILDING_STOREY_LIMIT,
+  ROUND_CROSSWIND_SLENDERNESS_LIMIT,
   STRUCTURAL_FRACTION,
   TARGET_SAFETY_FACTOR,
 } from './constants.ts'
 import { getMaterial } from './materials.ts'
 import {
   checkRoughnessConsistency,
-  projectPlan,
   storeyGeometry,
   storeyWindLoad,
 } from './wind.ts'
+import { projectPlan } from './plan.ts'
 import { storeyDrift } from './drift.ts'
 import { facadeQuantities, storeyQuantities } from './sustainability.ts'
 import {
@@ -142,6 +143,28 @@ function analyzeWind(
         `gust factor would raise the loads; results under-predict.`,
     )
   }
+  // A round plan lowers the along-wind force coefficient, and this engine has no
+  // across-wind case at all — so an ellipse can only ever make a design look
+  // safer. For a squat building that is fair; for a slender one, vortex
+  // shedding is what actually governs and is entirely absent here, which is the
+  // sort of thing a student has to be told before they quote the number.
+  const narrowestRound = structure.storeys.reduce((worst, storey) => {
+    if (storey.planShape !== 'ellipse') return worst
+    return Math.min(worst, storey.widthX_m, storey.widthY_m)
+  }, Number.POSITIVE_INFINITY)
+  if (
+    Number.isFinite(narrowestRound) &&
+    totalHeight / narrowestRound > ROUND_CROSSWIND_SLENDERNESS_LIMIT
+  ) {
+    warnings.push(
+      `A round plan this slender (height / diameter over ` +
+        `${ROUND_CROSSWIND_SLENDERNESS_LIMIT}) is normally governed by ` +
+        `across-wind vortex shedding, which this engine does not model at all. ` +
+        `The round shape lowers the along-wind force coefficient here, so these ` +
+        `results are optimistic rather than conservative.`,
+    )
+  }
+
   const kzTop = KZ_HEIGHTS_M[KZ_HEIGHTS_M.length - 1] ?? 0
   if (totalHeight > kzTop) {
     warnings.push(
@@ -152,7 +175,9 @@ function analyzeWind(
 
   // --- Per-storey loads and quantities -----------------------------------
   const loads = geometry.map((g) =>
-    storeyWindLoad(structure.exposureCategory, hazard, g),
+    // The total height goes down with each storey because a round plan's force
+    // coefficient is read off the *building's* slenderness, not the storey's.
+    storeyWindLoad(structure.exposureCategory, hazard, g, totalHeight),
   )
   const materials = structure.storeys.map((s) => getMaterial(library, s.materialId))
 
@@ -216,12 +241,18 @@ function analyzeWind(
     }
 
     const drift = storeyDrift(storey, material.youngsModulus_GPa, shear)
-    const projection = projectPlan(storey.widthX_m, storey.widthY_m, hazard.directionDeg)
+    const projection = projectPlan(
+      storey.widthX_m,
+      storey.widthY_m,
+      hazard.directionDeg,
+      storey.planShape,
+    )
     const fraction = STRUCTURAL_FRACTION[material.structuralClass][storey.lateralSystem]
     const sectionModulus = effectiveSectionModulus_m3(
       projection.acrossWindWidth_m,
       projection.alongWindDepth_m,
       fraction,
+      storey.planShape,
     )
     const strengthUtil = strengthUtilization(
       moment,
@@ -269,6 +300,7 @@ function analyzeWind(
     groundStorey.widthX_m,
     groundStorey.widthY_m,
     hazard.directionDeg,
+    groundStorey.planShape,
   )
 
   const totalSelfWeight_kN = sumSelfWeight_kN(storeys.map((s) => s.selfWeight_kN))

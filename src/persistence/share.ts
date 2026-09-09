@@ -29,7 +29,9 @@ export const SHARE_FRAGMENT_KEY = 'design'
 
 /**
  * Encoding budget. Measured: the default six-storey design encodes to 1276
- * characters, and a 24-storey one — the largest the limits allow — to 4060.
+ * characters, and a 24-storey one — the largest the limits allow — to 4060 as
+ * first written, 5463 as of schema 4. Every per-storey field costs about 600
+ * characters across a full stack, which is what `share.test.ts` pins.
  * Every current browser handles that comfortably (Chrome's practical ceiling
  * is ~32 kB, Safari's ~64 kB), though it is long enough to look alarming
  * pasted into a chat window. `share.test.ts` pins the maximum so a schema

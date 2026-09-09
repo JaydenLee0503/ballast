@@ -23,6 +23,7 @@
  */
 
 import { useState } from 'react'
+import { BlueprintPanel } from '@/components/BlueprintPanel.tsx'
 import { CritiquePanel } from '@/components/CritiquePanel.tsx'
 import {
   AdvancedControls,
@@ -249,7 +250,15 @@ export default function App() {
                   ))}
                 </nav>
 
-                {activeTab === 'basics' && <BasicControls />}
+                {/* Above the controls, not behind a tab of its own: it is the
+                    fastest way to get a building on screen, and what it writes
+                    is exactly what the controls under it edit. */}
+                {activeTab === 'basics' && (
+                  <>
+                    <BlueprintPanel />
+                    <BasicControls />
+                  </>
+                )}
                 {activeTab === 'advanced' && <AdvancedControls />}
                 {activeTab === 'saved' && (
                   <SavedDesigns structure={structure} hazard={hazard} />
@@ -261,22 +270,6 @@ export default function App() {
                     hazard={hazard}
                   />
                 )}
-
-                {/* Shown under both control tabs, not filed under Advanced.
-                    They are the limits of the model the student is reading
-                    numbers off, and "you are past where this is accurate" is
-                    exactly the sentence a beginner most needs. */}
-                {(activeTab === 'basics' || activeTab === 'advanced') &&
-                  result.warnings.length > 0 && (
-                    <section className="slab border-caution-ink/25 bg-caution/10 p-3">
-                      <Eyebrow>MODELLING CAVEATS</Eyebrow>
-                      <ul className="space-y-2 text-[0.7rem] leading-relaxed text-caution-ink">
-                        {result.warnings.map((warning) => (
-                          <li key={warning}>{warning}</li>
-                        ))}
-                      </ul>
-                    </section>
-                  )}
               </div>
             </div>
           </aside>
