@@ -12,19 +12,24 @@
  */
 
 import {
-  DRIFT_LIMIT_RATIO,
   TARGET_SAFETY_FACTOR,
+  designSpectrum,
+  approximatePeriod_s,
+  governingSystem,
   grossFloorArea_m2,
+  SEISMIC_SYSTEM_FACTORS,
   type AnalysisResult,
   type ExposureCategory,
+  type Hazard,
   type MaterialLibrary,
   FACADE_SYSTEMS,
   type FacadeSystem,
+  type SiteClass,
+  type StructuralClass,
   type Structure,
-  type WindHazard,
 } from '@/engine'
 import { FACADE_LABEL } from '@/lib/facade.ts'
-import type { CritiqueContext, CritiqueStorey } from './types.ts'
+import type { CritiqueContext, CritiqueHazard, CritiqueStorey } from './types.ts'
 
 /**
  * The same words the student is looking at. Sharing the label table with the
@@ -39,6 +44,14 @@ const EXPOSURE_DESCRIPTION: Readonly<Record<ExposureCategory, string>> = {
   B: 'urban or suburban, numerous closely spaced obstructions',
   C: 'open terrain with scattered obstructions',
   D: 'flat unobstructed terrain or water, the most severe',
+}
+
+const SITE_CLASS_DESCRIPTION: Readonly<Record<SiteClass, string>> = {
+  A: 'hard rock; the ground motion arrives damped',
+  B: 'rock',
+  C: 'very dense soil or soft rock',
+  D: 'stiff soil, the default assumption for most sites',
+  E: 'soft clay; the softest ground, which amplifies shaking the most',
 }
 
 function round(value: number, decimals: number): number {
@@ -57,10 +70,68 @@ function driftDenominator(ratio: number): number {
   return Math.round(1 / ratio)
 }
 
+/**
+ * The event, as facts.
+ *
+ * Only the fields the hazard actually has: absent means "this event has no such
+ * quantity", which is the same rule `StoreyResult` follows for Kz. The seismic
+ * branch recomputes its spectrum and period from the engine's own functions
+ * rather than being handed them, so the figures the model sees are the ones
+ * `analyze()` used and not a second derivation.
+ */
+function hazardFacts(
+  hazard: Hazard,
+  structure: Structure,
+  totalHeight_m: number,
+  groundStructuralClass: StructuralClass,
+): CritiqueHazard {
+  switch (hazard.kind) {
+    case 'wind':
+      return {
+        kind: 'wind',
+        description: 'a wind storm: a sustained gust pushing on the building',
+        directionDeg: round(hazard.directionDeg, 0),
+        gustSpeed_kmh: round(hazard.gustSpeed_kmh, 0),
+        exposureCategory: structure.exposureCategory,
+        exposureDescription: EXPOSURE_DESCRIPTION[structure.exposureCategory],
+      }
+    case 'seismic': {
+      const spectrum = designSpectrum(hazard)
+      const system = governingSystem(structure.storeys.map((s) => s.lateralSystem))
+      return {
+        kind: 'seismic',
+        description:
+          'an earthquake: the ground accelerates and the building has to drag its own mass with it',
+        directionDeg: round(hazard.directionDeg, 0),
+        Ss_g: round(hazard.Ss_g, 2),
+        S1_g: round(hazard.S1_g, 2),
+        SDS_g: round(spectrum.SDS_g, 2),
+        SD1_g: round(spectrum.SD1_g, 2),
+        siteClass: hazard.siteClass,
+        siteDescription: SITE_CLASS_DESCRIPTION[hazard.siteClass],
+        responseModificationR: SEISMIC_SYSTEM_FACTORS[system].R,
+        approximatePeriod_s: round(
+          approximatePeriod_s(totalHeight_m, system, groundStructuralClass),
+          2,
+        ),
+      }
+    }
+    case 'flood':
+      return {
+        kind: 'flood',
+        description:
+          'a flood: water standing against the building and flowing past it, pushing on the lower storeys and lifting the whole thing',
+        directionDeg: round(hazard.directionDeg, 0),
+        depth_m: round(hazard.depth_m, 1),
+        velocity_ms: round(hazard.velocity_ms, 1),
+      }
+  }
+}
+
 export function buildCritiqueContext(
   result: AnalysisResult,
   structure: Structure,
-  hazard: WindHazard,
+  hazard: Hazard,
   library: MaterialLibrary,
 ): CritiqueContext {
   const { scoreCard, stability } = result
@@ -93,12 +164,16 @@ export function buildCritiqueContext(
   })
 
   return {
-    hazard: {
-      gustSpeed_kmh: round(hazard.gustSpeed_kmh, 0),
-      directionDeg: round(hazard.directionDeg, 0),
-      exposureCategory: structure.exposureCategory,
-      exposureDescription: EXPOSURE_DESCRIPTION[structure.exposureCategory],
-    },
+    hazard: hazardFacts(
+      hazard,
+      structure,
+      totalHeight_m,
+      // 'concrete' is unreachable in practice: `analyze()` throws on a storey
+      // whose material is not in the library, so this context is only ever
+      // built for a design whose materials resolved.
+      library.get(structure.storeys[0]?.materialId ?? '')?.structuralClass ??
+        'concrete',
+    ),
     building: {
       storeyCount: structure.storeys.length,
       totalHeight_m: round(totalHeight_m, 1),
@@ -131,10 +206,21 @@ export function buildCritiqueContext(
       factorOfSafetyOverturning: round(stability.factorOfSafetyOverturning, 2),
       factorOfSafetySliding: round(stability.factorOfSafetySliding, 2),
       totalSelfWeight_kN: round(stability.totalSelfWeight_kN, 0),
+      // Present only under a flood, like the check itself.
+      ...(stability.buoyancy_kN === undefined
+        ? {}
+        : { buoyancy_kN: round(stability.buoyancy_kN, 0) }),
+      ...(stability.factorOfSafetyFlotation === undefined
+        ? {}
+        : {
+            factorOfSafetyFlotation: round(stability.factorOfSafetyFlotation, 2),
+          }),
     },
     limits: {
       targetSafetyFactor: TARGET_SAFETY_FACTOR,
-      driftLimitDenominator: driftDenominator(DRIFT_LIMIT_RATIO),
+      // The limit this analysis used, not the wind constant. See the note on
+      // `CritiqueLimits.driftLimitDenominator`.
+      driftLimitDenominator: driftDenominator(result.driftLimitRatio),
     },
     storeys,
     facadeNames: FACADE_SYSTEMS.map(facadeName),

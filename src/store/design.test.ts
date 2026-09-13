@@ -6,11 +6,13 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { analyze, MATERIAL_LIBRARY } from '@/engine'
+import { analyze, MATERIAL_LIBRARY, type Hazard } from '@/engine'
 import { parseBlueprint } from '@/ai/blueprint/parse.ts'
 import { createSavedDesign } from '@/persistence'
 import {
   PLAN_WIDTH_LIMITS_M,
+  SEISMIC_S1_LIMITS_G,
+  SEISMIC_SS_LIMITS_G,
   STOREY_HEIGHT_LIMITS_M,
   TAPER_LIMITS,
 } from '@/lib/limits.ts'
@@ -21,6 +23,20 @@ import {
   STARTING_BASELINE,
   useDesignStore,
 } from './design.ts'
+
+/**
+ * The gust speed of a hazard a test has kept on the wind branch.
+ *
+ * `hazard` is the union now, so reading a wind field off it needs narrowing.
+ * Throwing rather than returning a fallback: a test that lands here under the
+ * wrong hazard has stopped testing what it says it tests.
+ */
+function gustSpeed(hazard: Hazard): number {
+  if (hazard.kind !== 'wind') {
+    throw new Error(`expected a wind hazard, got ${hazard.kind}`)
+  }
+  return hazard.gustSpeed_kmh
+}
 
 const widths = () =>
   useDesignStore.getState().structure.storeys.map((storey) => storey.widthX_m)
@@ -52,7 +68,7 @@ describe('baseline', () => {
     const state = useDesignStore.getState()
     expect(state.baseline.structure).toBe(state.structure)
     expect(state.baseline.hazard).toBe(state.hazard)
-    expect(state.baseline.hazard.gustSpeed_kmh).toBe(240)
+    expect(gustSpeed(state.baseline.hazard)).toBe(240)
     expect(state.baseline.label).toBe('Pinned design')
   })
 
@@ -70,7 +86,7 @@ describe('baseline', () => {
     // person who sent it never saw".
     expect(state.baseline.label).toBe('Coastal block')
     expect(state.baseline.structure).toBe(state.structure)
-    expect(state.baseline.hazard.gustSpeed_kmh).toBe(260)
+    expect(gustSpeed(state.baseline.hazard)).toBe(260)
   })
 
   it('goes back to the starting design on resetBaseline, leaving the design alone', () => {
@@ -80,7 +96,7 @@ describe('baseline', () => {
 
     const state = useDesignStore.getState()
     expect(state.baseline).toBe(STARTING_BASELINE)
-    expect(state.hazard.gustSpeed_kmh).toBe(240)
+    expect(gustSpeed(state.hazard)).toBe(240)
   })
 
   it('goes back to the starting design on a full reset', () => {
@@ -285,7 +301,7 @@ describe('applyBlueprint', () => {
   it('leaves the storm alone', () => {
     useDesignStore.getState().setGustSpeed(240)
     useDesignStore.getState().applyBlueprint(arena())
-    expect(useDesignStore.getState().hazard.gustSpeed_kmh).toBe(240)
+    expect(gustSpeed(useDesignStore.getState().hazard)).toBe(240)
   })
 
   it('keeps a sectioned stack exactly as proposed', () => {
@@ -365,5 +381,78 @@ describe('storey height', () => {
     const before = widths()
     useDesignStore.getState().setStoreyHeight(4)
     expect(widths()).toEqual(before)
+  })
+})
+
+/**
+ * Switching hazards. The one rule the whole feature rests on is that changing
+ * the event does not change the design: the point of three hazards is that the
+ * same building meets all three and they disagree about it.
+ */
+describe('the hazard', () => {
+  it('starts as the storm the studio opens with', () => {
+    expect(useDesignStore.getState().hazard).toBe(DEFAULT_HAZARD)
+  })
+
+  it('leaves the structure completely alone when it changes', () => {
+    const before = useDesignStore.getState().structure
+    useDesignStore.getState().setHazardKind('seismic')
+    expect(useDesignStore.getState().structure).toBe(before)
+    useDesignStore.getState().setHazardKind('flood')
+    expect(useDesignStore.getState().structure).toBe(before)
+  })
+
+  it('remembers what each hazard was set to', () => {
+    useDesignStore.getState().setGustSpeed(265)
+    useDesignStore.getState().setHazardKind('flood')
+    useDesignStore.getState().setFloodDepth(4.5)
+    useDesignStore.getState().setHazardKind('wind')
+
+    const wind = useDesignStore.getState().hazard
+    expect(wind.kind).toBe('wind')
+    expect(wind.kind === 'wind' && wind.gustSpeed_kmh).toBe(265)
+
+    useDesignStore.getState().setHazardKind('flood')
+    const flood = useDesignStore.getState().hazard
+    expect(flood.kind === 'flood' && flood.depth_m).toBe(4.5)
+  })
+
+  it('ignores a setter for a hazard that is not selected', () => {
+    useDesignStore.getState().setHazardKind('seismic')
+    const before = useDesignStore.getState().hazard
+    useDesignStore.getState().setGustSpeed(300)
+    useDesignStore.getState().setFloodDepth(9)
+    expect(useDesignStore.getState().hazard).toBe(before)
+  })
+
+  it('sets a bearing on whichever hazard is live', () => {
+    useDesignStore.getState().setHazardKind('flood')
+    useDesignStore.getState().setDirection(450)
+    expect(useDesignStore.getState().hazard.directionDeg).toBe(90)
+  })
+
+  it('clamps to the editing limits, like every other control', () => {
+    useDesignStore.getState().setHazardKind('seismic')
+    useDesignStore.getState().setSeismicAcceleration(99, -4)
+    const hazard = useDesignStore.getState().hazard
+    expect(hazard.kind === 'seismic' && hazard.Ss_g).toBe(SEISMIC_SS_LIMITS_G.max)
+    expect(hazard.kind === 'seismic' && hazard.S1_g).toBe(SEISMIC_S1_LIMITS_G.min)
+  })
+
+  it('hands analyze() something it can run, whichever one is picked', () => {
+    for (const kind of ['wind', 'seismic', 'flood'] as const) {
+      useDesignStore.getState().setHazardKind(kind)
+      const { structure, hazard } = useDesignStore.getState()
+      expect(analyze(structure, hazard, MATERIAL_LIBRARY).hazardKind).toBe(kind)
+    }
+  })
+
+  it('is what the deltas are measured against, so switching shows a change', () => {
+    // The baseline holds the storm the design was pinned under. Switching the
+    // hazard therefore reads as a change, which is the honest answer: this is
+    // not the same question being asked of the same building.
+    const { baseline } = useDesignStore.getState()
+    useDesignStore.getState().setHazardKind('seismic')
+    expect(useDesignStore.getState().hazard).not.toBe(baseline.hazard)
   })
 })

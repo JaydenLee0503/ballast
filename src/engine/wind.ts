@@ -21,6 +21,7 @@ import type {
   Structure,
   WindHazard,
 } from './types.ts'
+import { interpolate, interpolatePairs } from './interpolate.ts'
 import { projectPlan } from './plan.ts'
 import {
   CF_ROUND_TABLE,
@@ -40,42 +41,6 @@ import {
 /** km/h -> m/s. */
 export function kmhToMs(speed_kmh: number): number {
   return speed_kmh / 3.6
-}
-
-/**
- * Linear interpolation on a monotonically increasing x-table, clamped at both
- * ends. Clamping matters: ASCE 7 does not tabulate Kz below 15 ft, and above
- * 500 ft this engine is out of its depth anyway (analyze() warns).
- */
-function interpolate(
-  xs: readonly number[],
-  ys: readonly number[],
-  x: number,
-): number {
-  const first = xs[0]
-  const firstY = ys[0]
-  const lastIndex = xs.length - 1
-  const last = xs[lastIndex]
-  const lastY = ys[lastIndex]
-  if (first === undefined || firstY === undefined || last === undefined || lastY === undefined) {
-    throw new Error('interpolate: empty table')
-  }
-  if (x <= first) return firstY
-  if (x >= last) return lastY
-  for (let i = 0; i < lastIndex; i += 1) {
-    const x0 = xs[i]
-    const x1 = xs[i + 1]
-    const y0 = ys[i]
-    const y1 = ys[i + 1]
-    if (x0 === undefined || x1 === undefined || y0 === undefined || y1 === undefined) {
-      throw new Error('interpolate: ragged table')
-    }
-    if (x >= x0 && x <= x1) {
-      const t = x1 === x0 ? 0 : (x - x0) / (x1 - x0)
-      return y0 + t * (y1 - y0)
-    }
-  }
-  return lastY
 }
 
 /**
@@ -157,9 +122,7 @@ export function netForceCoefficient(
   acrossWindWidth_m: number,
 ): number {
   const ratio = acrossWindWidth_m === 0 ? 0 : alongWindDepth_m / acrossWindWidth_m
-  const ratios = CP_LEEWARD_TABLE.map(([r]) => r)
-  const cps = CP_LEEWARD_TABLE.map(([, cp]) => cp)
-  return CP_WINDWARD + interpolate(ratios, cps, ratio)
+  return CP_WINDWARD + interpolatePairs(CP_LEEWARD_TABLE, ratio)
 }
 
 /**
@@ -181,9 +144,7 @@ export function roundForceCoefficient(
 ): number {
   const slenderness =
     acrossWindWidth_m <= 0 ? 0 : totalHeight_m / acrossWindWidth_m
-  const ratios = CF_ROUND_TABLE.map(([r]) => r)
-  const cfs = CF_ROUND_TABLE.map(([, cf]) => cf)
-  return interpolate(ratios, cfs, slenderness)
+  return interpolatePairs(CF_ROUND_TABLE, slenderness)
 }
 
 /**

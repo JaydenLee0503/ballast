@@ -12,7 +12,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import type { Structure, WindHazard } from '@/engine'
+import type { Hazard, Structure } from '@/engine'
+import { HAZARD_LABEL, hazardSummary } from '@/lib/hazard.ts'
 import {
   createSavedDesign,
   newDesignId,
@@ -26,14 +27,14 @@ import { useDesignLibrary } from '@/store/useDesignLibrary.ts'
 
 export interface SavedDesignsProps {
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 function describe(record: DesignRecord): string {
   const storeys = record.design.structure.storeys.length
-  const gust = Math.round(record.design.hazard.gustSpeed_kmh)
+  const event = `${HAZARD_LABEL[record.design.hazard.kind]}, ${hazardSummary(record.design.hazard)}`
   const saved = new Date(record.design.savedAt)
-  return `${storeys} storeys · ${gust} km/h · ${saved.toLocaleDateString()}`
+  return `${storeys} storeys · ${event} · ${saved.toLocaleDateString()}`
 }
 
 export function SavedDesigns({ structure, hazard }: SavedDesignsProps) {

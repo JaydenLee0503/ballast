@@ -43,19 +43,45 @@ export interface StoreyDrift {
   driftUtilization: number
 }
 
+/**
+ * Hazard-dependent parts of the drift check.
+ *
+ * Both default to the wind case, so an existing caller keeps exactly the
+ * behaviour it had.
+ *
+ * `amplification` is ASCE 7-16's deflection amplification factor Cd (§12.8.6):
+ * a seismic analysis computes drift from forces that have already been divided
+ * by R, so the elastic answer has to be multiplied back up by Cd to estimate
+ * what the building will actually do while it yields. Wind has no such step —
+ * its forces are the real ones — so the default is 1.
+ *
+ * `limitRatio` differs for the same reason the limits themselves do: h/500 is
+ * a serviceability limit for a storm that happens every winter, 0.020h is a
+ * life-safety limit for an earthquake expected once in a building's life.
+ */
+export interface DriftCheckOptions {
+  amplification?: number
+  limitRatio?: number
+}
+
 export function storeyDrift(
   storey: Storey,
   youngsModulus_GPa: number,
   storeyShear_kN: number,
+  options: DriftCheckOptions = {},
 ): StoreyDrift {
+  const amplification = options.amplification ?? 1
+  const limitRatio = options.limitRatio ?? DRIFT_LIMIT_RATIO
   const stiffness = storeyStiffness_kN_per_m(storey, youngsModulus_GPa)
-  const drift = stiffness > 0 ? storeyShear_kN / stiffness : Number.POSITIVE_INFINITY
+  const elastic_m =
+    stiffness > 0 ? storeyShear_kN / stiffness : Number.POSITIVE_INFINITY
+  const drift = elastic_m * amplification
   const ratio = drift / storey.height_m
   return {
     stiffness_kN_per_m: stiffness,
     drift_m: drift,
     driftRatio: ratio,
-    exceedsDriftLimit: ratio > DRIFT_LIMIT_RATIO,
-    driftUtilization: ratio / DRIFT_LIMIT_RATIO,
+    exceedsDriftLimit: ratio > limitRatio,
+    driftUtilization: ratio / limitRatio,
   }
 }

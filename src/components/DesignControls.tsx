@@ -27,24 +27,33 @@ import {
   EXPOSURE_CATEGORIES,
   FACADE,
   FACADE_SYSTEMS,
+  HAZARD_KINDS,
   LATERAL_SYSTEMS,
   MATERIAL_LIBRARY,
   PLAN_SHAPES,
+  SITE_CLASSES,
   type ExposureCategory,
   type FacadeSystem,
+  type Hazard,
   type LateralSystem,
   type PlanShape,
+  type SiteClass,
 } from '@/engine'
 import { FACADE_BLURB, FACADE_LABEL } from '@/lib/facade.ts'
 import { ARCHETYPES } from '@/lib/typology.ts'
 import {
   ANCHOR_CAPACITY_LIMITS_KN,
+  FLOOD_DEPTH_LIMITS_M,
+  FLOW_VELOCITY_LIMITS_MS,
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
+  SEISMIC_S1_LIMITS_G,
+  SEISMIC_SS_LIMITS_G,
   STOREY_COUNT_LIMITS,
   STOREY_HEIGHT_LIMITS_M,
   TAPER_LIMITS,
 } from '@/lib/limits.ts'
+import { HAZARD_BLURB, HAZARD_LABEL, HAZARD_LESSON } from '@/lib/hazard.ts'
 import { useDesignStore } from '@/store/design.ts'
 
 const MATERIALS = [...MATERIAL_LIBRARY.values()]
@@ -67,6 +76,23 @@ const EXPOSURE_HINT: Readonly<Record<ExposureCategory, string>> = {
   B: 'Urban / wooded',
   C: 'Open terrain',
   D: 'Flat, water',
+}
+
+/**
+ * What the ground under the building is made of, in a word.
+ *
+ * The seismic counterpart of `EXPOSURE_HINT`, and the same kind of control:
+ * something the student declares about the site rather than about the design.
+ * Soft ground amplifies shaking — E roughly triples a modest earthquake against
+ * hard rock — which is the single most surprising thing in the seismic model
+ * and the reason this control is worth having at all.
+ */
+const SITE_CLASS_HINT: Readonly<Record<SiteClass, string>> = {
+  A: 'Hard rock',
+  B: 'Rock',
+  C: 'Dense soil',
+  D: 'Stiff soil',
+  E: 'Soft clay',
 }
 
 function Field({
@@ -155,16 +181,145 @@ function glassPercent(facade: FacadeSystem): string {
 }
 
 /**
+ * Which event, and how bad.
+ *
+ * The chips are the most consequential control in the app: the same building
+ * meets three hazards that reward three different designs, and this is where a
+ * student discovers that the tall light tower which sails through a flood is
+ * the one an earthquake finds easiest to throw around. Switching does not touch
+ * the structure — that is the whole point — and each hazard remembers what it
+ * was last set to, so comparing three events on one building costs three
+ * clicks rather than three re-dials.
+ *
+ * Under the chips, only the sliders the chosen hazard actually has. A gust
+ * speed shown greyed out under an earthquake would be a control for a quantity
+ * that does not exist in that analysis.
+ */
+export function HazardControls() {
+  const hazard = useDesignStore((state) => state.hazard)
+  const setHazardKind = useDesignStore((state) => state.setHazardKind)
+  const setGustSpeed = useDesignStore((state) => state.setGustSpeed)
+  const setDirection = useDesignStore((state) => state.setDirection)
+  const setSeismicAcceleration = useDesignStore(
+    (state) => state.setSeismicAcceleration,
+  )
+  const setFloodDepth = useDesignStore((state) => state.setFloodDepth)
+  const setFlowVelocity = useDesignStore((state) => state.setFlowVelocity)
+
+  return (
+    <Group title="The hazard" hint={HAZARD_BLURB[hazard.kind]}>
+      <div className="grid grid-cols-3 gap-1.5">
+        {HAZARD_KINDS.map((kind: Hazard['kind']) => (
+          <button
+            key={kind}
+            type="button"
+            onClick={() => setHazardKind(kind)}
+            className={chipClass(hazard.kind === kind)}
+          >
+            {HAZARD_LABEL[kind]}
+          </button>
+        ))}
+      </div>
+
+      {hazard.kind === 'wind' && (
+        <Field label="Gust speed" value={`${hazard.gustSpeed_kmh} km/h`}>
+          <Slider
+            min={GUST_SPEED_LIMITS_KMH.min}
+            max={GUST_SPEED_LIMITS_KMH.max}
+            step={5}
+            value={hazard.gustSpeed_kmh}
+            onChange={setGustSpeed}
+          />
+        </Field>
+      )}
+
+      {hazard.kind === 'seismic' && (
+        <>
+          {/* Two accelerations rather than one "intensity", because that is
+              what the ASCE 7 maps publish and what the engine reads. Short
+              period governs a stiff building, one second governs a tall one,
+              and a student who moves them separately sees exactly that. */}
+          <Field label="Shaking, short period" value={`${hazard.Ss_g.toFixed(2)} g`}>
+            <Slider
+              min={SEISMIC_SS_LIMITS_G.min}
+              max={SEISMIC_SS_LIMITS_G.max}
+              step={0.05}
+              value={hazard.Ss_g}
+              onChange={(Ss_g) => setSeismicAcceleration(Ss_g, hazard.S1_g)}
+            />
+          </Field>
+          <Field label="Shaking, long period" value={`${hazard.S1_g.toFixed(2)} g`}>
+            <Slider
+              min={SEISMIC_S1_LIMITS_G.min}
+              max={SEISMIC_S1_LIMITS_G.max}
+              step={0.05}
+              value={hazard.S1_g}
+              onChange={(S1_g) => setSeismicAcceleration(hazard.Ss_g, S1_g)}
+            />
+          </Field>
+          <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/45">
+            How hard the ground moves, as a fraction of gravity. Short period
+            shakes squat buildings; long period shakes tall ones. Set the ground
+            it stands on under Advanced.
+          </p>
+        </>
+      )}
+
+      {hazard.kind === 'flood' && (
+        <>
+          <Field label="Water depth" value={`${hazard.depth_m.toFixed(1)} m`}>
+            <Slider
+              min={FLOOD_DEPTH_LIMITS_M.min}
+              max={FLOOD_DEPTH_LIMITS_M.max}
+              step={0.1}
+              value={hazard.depth_m}
+              onChange={setFloodDepth}
+            />
+          </Field>
+          <Field label="Flow speed" value={`${hazard.velocity_ms.toFixed(1)} m/s`}>
+            <Slider
+              min={FLOW_VELOCITY_LIMITS_MS.min}
+              max={FLOW_VELOCITY_LIMITS_MS.max}
+              step={0.1}
+              value={hazard.velocity_ms}
+              onChange={setFlowVelocity}
+            />
+          </Field>
+          <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/45">
+            Push doubles when the water is 1.4× deeper and quadruples when it is
+            twice as deep. Standing water still lifts.
+          </p>
+        </>
+      )}
+
+      <Field label="Direction" value={`${Math.round(hazard.directionDeg)}°`}>
+        <Slider
+          min={0}
+          max={355}
+          step={5}
+          value={hazard.directionDeg}
+          onChange={setDirection}
+        />
+      </Field>
+      <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/45">
+        0° acts along the width, 90° along the depth.
+      </p>
+
+      <p className="text-[0.65rem] leading-relaxed text-ink/55">
+        {HAZARD_LESSON[hazard.kind]}
+      </p>
+    </Group>
+  )
+}
+
+/**
  * Stack it, size it, blow on it. Everything a student needs to reach the
  * lesson — that making a building safer costs carbon and money — without
  * knowing what a lateral system is.
  */
 export function BasicControls() {
   const structure = useDesignStore((state) => state.structure)
-  const hazard = useDesignStore((state) => state.hazard)
 
-  const setGustSpeed = useDesignStore((state) => state.setGustSpeed)
-  const setDirection = useDesignStore((state) => state.setDirection)
   const addStorey = useDesignStore((state) => state.addStorey)
   const removeStorey = useDesignStore((state) => state.removeStorey)
   const setPlanDimensions = useDesignStore((state) => state.setPlanDimensions)
@@ -391,33 +546,7 @@ export function BasicControls() {
       </Group>
 
       <div data-tour="wind">
-      <Group
-        title="The storm"
-        hint="A gust, and the direction it blows towards. Wide faces catch more of it."
-      >
-        <Field label="Gust speed" value={`${hazard.gustSpeed_kmh} km/h`}>
-          <Slider
-            min={GUST_SPEED_LIMITS_KMH.min}
-            max={GUST_SPEED_LIMITS_KMH.max}
-            step={5}
-            value={hazard.gustSpeed_kmh}
-            onChange={setGustSpeed}
-          />
-        </Field>
-
-        <Field label="Direction" value={`${Math.round(hazard.directionDeg)}°`}>
-          <Slider
-            min={0}
-            max={355}
-            step={5}
-            value={hazard.directionDeg}
-            onChange={setDirection}
-          />
-        </Field>
-        <p className="-mt-1 text-[0.65rem] leading-relaxed text-ink/45">
-          0° blows along the width, 90° along the depth.
-        </p>
-      </Group>
+      <HazardControls />
       </div>
 
       <button
@@ -437,9 +566,11 @@ export function BasicControls() {
  */
 export function AdvancedControls() {
   const structure = useDesignStore((state) => state.structure)
+  const hazard = useDesignStore((state) => state.hazard)
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
 
   const setExposure = useDesignStore((state) => state.setExposure)
+  const setSiteClass = useDesignStore((state) => state.setSiteClass)
   const setAnchorCapacity = useDesignStore((state) => state.setAnchorCapacity)
   const setStoreyMaterial = useDesignStore((state) => state.setStoreyMaterial)
   const setStoreySystem = useDesignStore((state) => state.setStoreySystem)
@@ -559,9 +690,44 @@ export function AdvancedControls() {
         </select>
       </Group>
 
+      {/* The seismic twin of Exposure, and it sits here for the same reason:
+          both are declarations about the site rather than about the design, and
+          both need a sentence of background before they mean anything. */}
+      {hazard.kind === 'seismic' && (
+        <Group
+          title="Ground under the building"
+          hint="Soft ground shakes harder. The same earthquake on soft clay can arrive nearly three times as strong as on rock — which is why one street falls down and the next one does not."
+        >
+          <div className="grid grid-cols-5 gap-1">
+            {SITE_CLASSES.map((siteClass) => (
+              <button
+                key={siteClass}
+                type="button"
+                onClick={() => setSiteClass(siteClass)}
+                title={SITE_CLASS_HINT[siteClass]}
+                className={`rounded-lg border-2 px-1 py-1.5 font-display text-xs ${
+                  hazard.siteClass === siteClass
+                    ? 'border-ink bg-bloom/35 text-ink shadow-[2px_2px_0_0_var(--color-ink)]'
+                    : 'border-ink/15 bg-paper text-ink/55 hover:border-ink/40'
+                }`}
+              >
+                {siteClass}
+              </button>
+            ))}
+          </div>
+          <p className="text-[0.65rem] text-ink/45">
+            {SITE_CLASS_HINT[hazard.siteClass]}
+          </p>
+        </Group>
+      )}
+
       <Group
         title="Exposure"
-        hint="What the wind crossed before it reached you. Rougher ground slows it down near the base."
+        hint={
+          hazard.kind === 'wind'
+            ? 'What the wind crossed before it reached you. Rougher ground slows it down near the base.'
+            : 'Only read under a storm, but it travels with the design — switch the hazard back and it is still what you set.'
+        }
       >
         <div className="grid grid-cols-3 gap-1">
           {EXPOSURE_CATEGORIES.map((category) => (

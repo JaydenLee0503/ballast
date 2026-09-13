@@ -34,7 +34,33 @@ export {
   grossSectionModulus_m3,
   type PlanProjection,
 } from './plan.ts'
-export { storeyStiffness_kN_per_m, storeyDrift } from './drift.ts'
+export {
+  storeyStiffness_kN_per_m,
+  storeyDrift,
+  type DriftCheckOptions,
+} from './drift.ts'
+export { interpolate, interpolatePairs } from './interpolate.ts'
+export {
+  siteCoefficients,
+  designSpectrum,
+  periodParameters,
+  approximatePeriod_s,
+  governingSystem,
+  seismicResponseCoefficient,
+  verticalDistributionExponent,
+  distributeBaseShear_kN,
+  seismicDesign,
+  type DesignSpectrum,
+  type SeismicDesign,
+} from './seismic.ts'
+export {
+  floodDragCoefficient,
+  storeyFloodLoad,
+  obstructedWidth_m,
+  flotationSafetyFactor,
+  type StoreyFloodLoad,
+} from './flood.ts'
+export { assessDamage, damageState, safetyMargin } from './damage.ts'
 export {
   compareDesigns,
   metricDelta,

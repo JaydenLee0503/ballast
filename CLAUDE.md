@@ -1,9 +1,9 @@
 # Ballast
 
 A browser-based 3D simulator where students take a structure, subject it to a
-real climate hazard, and redesign it to survive while minimising embodied
-carbon and cost. The carbon / cost / safety tradeoff is the product, not a
-footnote on it.
+real climate hazard — a storm, an earthquake or a flood — watch the event hit
+it, and redesign it to survive while minimising embodied carbon and cost. The
+carbon / cost / safety tradeoff is the product, not a footnote on it.
 
 ---
 
@@ -55,16 +55,21 @@ src/
     data/
       materials.json   seed library, one `sources` citation per number
     materials.ts       library loading + validation
+    interpolate.ts     clamped table lookup, shared by every coefficient table
     plan.ts            footprint geometry: area, perimeter, silhouette, section
     wind.ts            ASCE 7-style wind loads
+    seismic.ts         ASCE 7 Equivalent Lateral Force procedure
+    flood.ts           hydrostatic, hydrodynamic and buoyant flood loads
     drift.ts           storey stiffness and drift
     stability.ts       overturning, sliding, per-storey bending
     sustainability.ts  quantity take-off -> carbon and cost
+    damage.ts          utilisation -> what the simulation is allowed to draw
     compare.ts         two AnalysisResults -> per-metric deltas and direction
     analyze.ts         the single entry point; dispatches on hazard.kind
     index.ts           public surface
   store/
     design.ts          zustand: structure + hazard + baseline + selection
+    useSimulation.ts   the three-phase clock for running an event
     useAnalysis.ts     the bridge: analyze() memoised on (structure, hazard)
     useComparison.ts   the same, for the baseline, then compareDesigns()
     sharedDesign.ts    opens a design out of the URL fragment, at boot
@@ -79,7 +84,11 @@ src/
     Viewport.tsx       r3f canvas, lighting, camera, legend
     scene/
       StoreyStack.tsx  one box per storey, coloured by utilization
-      WindArrows.tsx   per-storey arrows, length from lateralForce_kN
+      StoreyCracks.tsx damage, drawn from the engine's own banding
+      HazardArrows.tsx per-storey arrows, length from lateralForce_kN
+      FloodWater.tsx   the water surface, at the depth the student set
+      motion.ts        how the building moves during an event. pure
+      useSimulationMotion.ts  that motion, as a per-frame ref
       World.tsx        sky, sun, streets, trees, traffic, neighbours
       scenery.ts       the deterministic layout of all of that
       windows.ts       the window shader, shared by tower and neighbourhood
@@ -87,6 +96,7 @@ src/
     ScorePanel.tsx     the three dials + governing failure mode
     StoreyTable.tsx    per-storey breakdown, selectable rows
     StoreyTooltip.tsx  the hover card over a storey in the 3D view
+    SimulationOverlay.tsx  countdown, banner and the report afterwards
     DesignControls.tsx every slider and select, as Basic + Advanced
     SavedDesigns.tsx   save, reopen, share
     BlueprintPanel.tsx describe a building; shows what was clamped and what is missing
@@ -104,6 +114,8 @@ src/
       parse.ts         reply -> a checked, clamped Blueprint. or a refusal
       client.ts        POSTs to /api/blueprint, then parses
   lib/
+    hazard.ts          human names and colours for the three hazards. copy only
+    cracks.ts          seeded crack layout, in perimeter coordinates
     orbit.ts           rigid camera rotation about an arbitrary pivot
     facade.ts          human names for the envelope systems. copy only
     palette.ts         utilisation colour bands (source of truth for colour)
@@ -140,8 +152,8 @@ plugins/
 ### Extension points
 
 - **New hazards** join the `Hazard` discriminated union with their own `kind`,
-  and `analyze()` gains a `case`. Seismic, flood and wildfire were designed for
-  from the start; no call site changes when they arrive.
+  and `analyze()` gains a `case`. Wind, seismic and flood are implemented;
+  wildfire is the next candidate and no call site changes when it arrives.
 - **New materials** are rows in `data/materials.json`. Every numeric field
   needs a matching entry in `sources`.
 
@@ -188,6 +200,118 @@ documented in situ; this is the index.
 | Facade rates are assembly archetypes, not EPDs | `constants.ts` `FACADE` | 3x differences are real, 10% ones are noise. Warned on every analysis that uses one |
 | Facade area is perimeter x height, no roof | `sustainability.ts` `facadeArea_m2` | A slab block pays for more skin than a square one of the same floor area |
 | Costs are indicative, not surveyed | `data/materials.json` | Flagged as a warning on every analysis. The weakest data in the project |
+| Seismic weight is frame + facade only | `constants.ts` seismic scope | ASCE 7 §12.7.2 counts much more, so base shear is low. The one knowingly unconservative branch; warned on every seismic analysis |
+| Equivalent Lateral Force only, one direction | `seismic.ts` header | No modal analysis, no vertical motion, no torsion, no orthogonal combination |
+| R from the weakest storey in the stack | `seismic.ts` `governingSystem` | ASCE 7 §12.2.3.1. One unbraced storey costs the whole tower its ductility credit |
+| `none` has no R in the table; 1.25 is a calibration | `constants.ts` `SEISMIC_SYSTEM_FACTORS` | Such a building may not be built in any seismic design category |
+| Flood assumes a dry interior | `flood.ts` header | A wet-floodproofed building equalises and sees almost none of the hydrostatic load |
+| 85% of gross volume displaces water | `constants.ts` `BUOYANT_VOLUME_FRACTION` | The biggest knob in the flood branch. No building is a sealed hull, and none is a sieve |
+| No waves, debris, scour, or wind at the same time | `flood.ts` header | Makes this a riverine flood, not a coastal surge. Warned on every flood analysis |
+| Damage is three bands of `utilization` | `constants.ts` `DAMAGE_THRESHOLDS` | Not a fragility model. Past 2.5x a linear-elastic result predicts nothing, which is why the band is named rather than numbered |
+
+---
+
+## Three hazards
+
+Wind, seismic and flood, and the reason to have three is that they reward
+*opposite* designs. That is the lesson, and it is not one a student can reach
+with a single hazard however many sliders it has:
+
+| | where the load comes from | what it punishes | what helps |
+|---|---|---|---|
+| **wind** | pressure on the face, growing with height | wide faces, height, flexibility | narrow plan, stiffness, weight |
+| **seismic** | the building's own mass, accelerated | weight, a weak storey anywhere | light floors, ductility, evenness |
+| **flood** | water depth on the lowest storeys, and buoyancy | light buildings, deep water | weight, anchors, letting the water in |
+
+A six-storey CLT block at the studio's defaults: **232 kN** of base shear in a
+150 km/h gale with a safety factor of 15; **974 kN** in a moderate earthquake,
+over the drift limit; and in two metres of flood water, **269 kN** all of it on
+the ground storey, governed by a flotation factor of 2.3. One building, three
+completely different answers. Switching hazards deliberately does not touch the
+structure — that is the whole point of the control.
+
+**One pipeline, three load cases.** `analyze()` computes quantities and weights
+*first*, then branches: seismic force is proportional to weight and flood
+buoyancy is subtracted from it, so a pipeline that computed loads first would
+have to be turned inside out. Each hazard owns one function producing per-storey
+forces plus its own warnings; everything after that — shear accumulation, drift,
+bending, overturning, sliding, the ScoreCard — is shared.
+
+**Per-storey load elevation is a field, not an assumption.** `StoreyResult.
+loadElevation_m` is mid-height for wind and seismic, and the centroid of the
+*submerged* part for a flood. In the storey the water surface passes through the
+pressure is triangular and the resultant sits low; using mid-height there would
+overstate the overturning moment by a third.
+
+**Fields absent, not zeroed.** `Kz` and `velocityPressure_Pa` are optional on
+`StoreyResult` and simply absent under an earthquake, as `submergedDepth_m` and
+`buoyancy_kN` are under a gale. Reporting 0 would be a number about a quantity
+that does not exist — the same failure as inventing one, pointing the other way
+— and `ai/guard.ts` would then happily let a model quote it.
+
+**The drift limit travels with the analysis.** `AnalysisResult.driftLimitRatio`
+is h/500 for wind and 0.020h for seismic (ASCE 7-16 Table 12.12-1), because the
+wind check is serviceability for a storm that happens every winter and the
+seismic one is life safety for an event expected once. A panel that printed a
+fixed h/500 beside a seismic drift would show a passing design as ten times
+over.
+
+**Flotation is its own failure mode.** Not a term inside overturning, because
+the fix is different: a building about to tip can be anchored at its windward
+edge; a building about to float has to be made heavier, or be allowed to flood
+inside so the water is on both sides of the slab. `BUOYANT_VOLUME_FRACTION` is
+the flood branch's biggest knob, in the sense `LATERAL_STIFFNESS_COEFFICIENT` is
+for drift.
+
+**Seismic is the one branch that is knowingly unconservative**, and it says so
+on every analysis: the effective seismic weight is the frame plus the facade,
+where ASCE 7-16 §12.7.2 would also count partitions, finishes, services and part
+of the storage live load. The rest of the honest edges — one direction at a
+time, no vertical motion, no torsion, no waves, no debris, no scour, a dry
+interior — are `analyze()` warnings rather than documentation nobody opens.
+
+---
+
+## Watching it happen
+
+"Start a simulation" plays the event: a beat of bracing, five seconds of impact,
+then the damage, and a button back to the studio. It exists because a number
+going red is not the same experience as a building coming down, and the second
+one is what makes a fourteen year old change something.
+
+**The engine decides the outcome; the animation decides the timing.**
+`engine/damage.ts` bands each storey's `utilization` into a `DamageState` the
+way `lib/palette.ts` bands the same number into three colours, and reads the
+global checks for the verdict. Nothing in `components/` picks which floor falls.
+An animation that chose outcomes would be the most dramatic thing on screen and
+the least traceable, which is exactly what the one rule forbids.
+
+**The motion is exaggerated, and the screen says so.** A storey moves by its own
+`drift_m` accumulated up the stack — the number the drift dial reads — times
+`MOTION_EXAGGERATION`. At true scale h/500 on a 21 m building is 42 mm, a pixel;
+drawn at 45x it is a visible lean, and the banner reads "movement shown 45x life
+size · the numbers are not exaggerated" for as long as the building is moving.
+The lean is also capped at a fraction of the storey's width, because a
+collapsing design reports drift of 10% and would otherwise leave the screen;
+that cap is a drawing limit and the table is not capped.
+
+**The oscillation is a shape, not a prediction.** This engine has no dynamic
+analysis, so the *frequency* on screen is chosen to read correctly — an
+earthquake is fast and swings through vertical, a gust is slow and one-sided, a
+flood does not shake at all — and means nothing quantitative. The amplitude is
+the part that comes from the engine. `motion.ts` is pure and tested.
+
+**Cracks are seeded, never random.** `lib/cracks.ts` lays polylines out in the
+same normalised (u, v) perimeter space `windows.ts` sets panes out in, so a
+round storey cracks without a second implementation, and from a fixed seed so
+the same storey cracks in the same places every run. A student who runs the same
+storm twice and gets a differently broken building learns that the picture is
+decorative and stops trusting the parts that are not.
+
+**Dismissing returns an intact building.** Damage is drawn only during impact
+and aftermath; editing the design or changing the hazard ends the run. Leaving a
+collapsed tower standing over a design that has since changed would make the
+picture a lie about the numbers beside it.
 
 ---
 
@@ -392,6 +516,16 @@ rewrite a saved design's floor area, envelope, wind load, stiffness and safety
 factor at once, for a shape the student never chose: the same failure as
 substituting an unknown material, at five times the blast radius.
 
+**Schema 5 let the hazard be an earthquake or a flood, and needs no migration.**
+Every design versions 1 through 4 wrote carried `hazard.kind === 'wind'`,
+because wind was the only hazard there was; they parse through the wind branch
+unchanged and read back with exactly the numbers they were saved with. What the
+bump buys is the other direction — an older build should refuse a version-5
+seismic design by number rather than fail somewhere deeper. An unknown site
+class is refused by name for the same reason an unknown material is:
+substituting a stiff site would rewrite the ground motion the design was checked
+against.
+
 **One set of bounds.** `lib/limits.ts` holds the editing limits, and both the
 controls and the parser read them. If persistence had its own numbers, a saved
 file could restore a state the sliders can no longer express — 40 storeys on a
@@ -482,7 +616,8 @@ during a demo.
 
 **Everything the page claims, the engine also claims.** The tower leans because
 drift is real, the lower blocks are the loaded ones because storey shear
-accumulates downward, and "stuff we are upfront about" is the same list
+accumulates downward, the three hazard cards say what the three branches of
+`analyze()` actually model, and "stuff we are upfront about" is the same list
 `analyze()` raises as warnings. Overselling a teaching model is the fastest way
 to make it untrustworthy the moment somebody opens it, which is why the limits
 are a section on the front page rather than a footnote inside the app.
@@ -513,6 +648,20 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   one lightness apart. Fills — the dial bars, the legend swatches — still use
   the raw hex, because those have to read as the same colour as the storey they
   describe.
+- **The hazard picker is three chips, and it never touches the structure.**
+  The point of three hazards is that one building meets all of them and they
+  disagree; a picker that also reset the design would make that impossible to
+  see. Each hazard remembers what it was last set to, so comparing three events
+  on one building costs three clicks rather than three re-dials. Only the
+  sliders the chosen hazard actually has are rendered — a greyed-out gust speed
+  under an earthquake would be a control for a quantity that does not exist in
+  that analysis.
+- **Hazard colours are not utilisation colours.** `lib/hazard.ts` owns the blue,
+  orange and cyan that say *what is hitting it*; `lib/palette.ts` owns the
+  green, amber and red that say *how hard it is working*. Kept in separate files
+  for the same reason the landing palette is separate from the utilisation one:
+  a restyle of the storm must never be able to change what "over the limit"
+  looks like.
 - **Floor count and floor height are separate controls.** Storey count used to
   be the only way to make a building taller, which is fine while every design is
   a stack of dwellings and wrong the moment one is a single volume — a hall, a
@@ -628,9 +777,17 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   Three discrete bands, not a ramp, so a shaded 3D box and a table cell mean
   the same thing.
 - **The viewport invents nothing.** Every colour and every arrow length reads
-  a field off `AnalysisResult`. Wind arrows are normalised against the largest
+  a field off `AnalysisResult`. Arrows are normalised against the largest
   storey force, so they show the *shape* of the load; magnitude is the panel's
-  job.
+  job. One component draws all three hazards and they look nothing alike: wind
+  and seismic arrows grow upward for different reasons, and a flood's exist only
+  below the water line. The first time a student switches a tower from a storm
+  to a flood, the fan of arrows drops to its ankles.
+- **The water is scenery; what it does to the building is not.** `FloodWater` is
+  a translucent plane at the depth the student set, with a ripple in the
+  fragment shader rather than a texture — the same rule that keeps HDRIs out of
+  the scene. It reads no engine output. The arrows and the storey colours are
+  the claims.
 - **Rotation is about the point under the cursor**, and it is ours, not
   OrbitControls'. Its model makes `target` both the pivot and the centre of the
   screen — `update()` ends in `lookAt(target)` — so moving the target onto the
@@ -789,11 +946,28 @@ The engine is the part that must not rot, so it is the part with tests.
   intensity and star opacity are monotonic in building height, and the sun
   never drops below the horizon. Colours are 8-bit, so the fine sweep allows
   one rounding level and a coarse sweep is strict.
+- `seismic.test.ts` opens with a **fully hand-worked ELF case** in its header —
+  Fa, Fv, SMS, SM1, SDS, SD1, Ta, Cs, k — so a changed coefficient says which
+  step moved. It then holds the properties: force monotonic in mapped
+  acceleration, Cs falling off as 1/T past the plateau, the distribution summing
+  to the base shear, and the one worth having — that mass helps under wind and
+  hurts under an earthquake, the whole reason the second hazard exists.
+- `flood.test.ts` hand-works the hydrostatic integral and checks the resultant
+  lands at d/3, which falls out of the closed form rather than being asserted.
+  It also pins that load grows with the square of depth, that drag grows with
+  the square of velocity, that a two-storey wall is loaded exactly as a
+  one-storey wall of the same depth, and that a light building floats where a
+  heavy one does not.
+- `damage.test.ts` is about what the banding must NOT do: invent a collapse, or
+  report a building standing when its overturning factor says otherwise.
+- `scene/motion.test.ts` pins the two claims the animation makes — that movement
+  is proportional to the engine's drift, and that a storey only falls at or
+  above the index `DamageReport` gave.
 - `ai/guard.test.ts` is written from the attacker's side: what could a model
   say that is wrong and still slip through? It covers invented forces,
-  invented safety factors, predicted outcomes, and the dimension-confusion
-  case where a material density would otherwise excuse a fabricated base
-  shear.
+  invented safety factors, predicted outcomes, invented ground accelerations
+  and flow velocities, and the dimension-confusion case where a material
+  density would otherwise excuse a fabricated base shear.
 - `ai/prompt.test.ts` asserts the hard rules are still in the system prompt,
   so softening them fails the suite rather than quietly changing behaviour.
   `ai/blueprint/prompt.test.ts` does the same for the blueprint's rules, and
@@ -837,6 +1011,12 @@ The engine is the part that must not rot, so it is the part with tests.
 7. **Described buildings** (done) — `ai/blueprint/`: a sentence in, a checked
    starting point out, with what was clamped and what the engine cannot
    represent printed beside it. See "Describing a building" above.
+8. **Seismic and flood** (done) — two more branches of `analyze()`, two more
+   sets of cited coefficients, and a hazard picker that leaves the structure
+   alone. See "Three hazards" above.
+9. **Watching it happen** (done) — "Start a simulation" plays the event and
+   shows what it left behind, with the outcome coming from `engine/damage.ts`
+   and only the timing from the animation. See "Watching it happen" above.
 
 Also outstanding: a production transport for `/api/critique` and
 `/api/blueprint`, and streaming (the reply currently arrives in one go).

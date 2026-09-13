@@ -10,14 +10,14 @@
  * is the request; the guard is the verification.
  */
 
-import type { CritiqueContext } from './types.ts'
+import type { CritiqueContext, CritiqueHazard } from './types.ts'
 
 export interface ChatMessage {
   role: 'system' | 'user'
   content: string
 }
 
-export const SYSTEM_PROMPT = `You are a structural engineering tutor helping a first-year student understand why their building design passes or fails under wind load.
+export const SYSTEM_PROMPT = `You are a structural engineering tutor helping a first-year student understand why their building design passes or fails under a natural hazard: a wind storm, an earthquake, or a flood. The FACTS say which one, and the three behave very differently — wind pushes hardest at the top, an earthquake's force grows with the building's own weight, and a flood loads the bottom and tries to float it. Explain the one you were given.
 
 A deterministic physics engine has already analysed the design. Its results are given to you as FACTS. Your job is to explain and advise. It is not to calculate.
 
@@ -27,6 +27,7 @@ HARD RULES:
 3. If your point needs a quantity that is not in the FACTS, make the point in words instead. "The upper storeys carry noticeably less load" is correct; inventing the figure is not.
 4. Do not predict what a change would produce numerically. Say a change would reduce drift; never say by how much. The student will apply it and the engine will tell them.
 5. Only recommend materials and lateral systems listed in the FACTS.
+6. Do not advise about a hazard you were not given. If the FACTS describe a flood, do not talk about wind speeds; the student chose one event and is looking at its numbers.
 
 Style: plain English, no jargon without a gloss, warm but direct. A student reads this to learn, not to be flattered.
 
@@ -55,6 +56,64 @@ function driftText(denominator: number): string {
 }
 
 /**
+ * The hazard block, which is the one part of the fact sheet that differs
+ * between the three events.
+ *
+ * Only the lines the hazard actually has. A `CritiqueHazard` leaves the fields
+ * that do not apply undefined, so this reads them rather than printing
+ * "gust speed: 0 km/h" at an earthquake — which would be a figure about a
+ * quantity that does not exist, and a figure the guard would then happily
+ * accept the model quoting.
+ */
+function hazardLines(hazard: CritiqueHazard): string[] {
+  const lines = [`- This is ${hazard.description}.`]
+
+  if (hazard.gustSpeed_kmh !== undefined) {
+    lines.push(`- Wind gust speed: ${fixed(hazard.gustSpeed_kmh, 0)} km/h`)
+  }
+  if (hazard.exposureCategory !== undefined) {
+    lines.push(
+      `- Exposure category ${hazard.exposureCategory} (${hazard.exposureDescription ?? ''})`,
+    )
+  }
+  if (hazard.Ss_g !== undefined && hazard.S1_g !== undefined) {
+    lines.push(
+      `- Mapped ground motion: Ss = ${fixed(hazard.Ss_g, 2)} g at short period, ` +
+        `S1 = ${fixed(hazard.S1_g, 2)} g at one second`,
+    )
+  }
+  if (hazard.SDS_g !== undefined && hazard.SD1_g !== undefined) {
+    lines.push(
+      `- Design accelerations after the site adjustment: SDS = ` +
+        `${fixed(hazard.SDS_g, 2)} g, SD1 = ${fixed(hazard.SD1_g, 2)} g`,
+    )
+  }
+  if (hazard.siteClass !== undefined) {
+    lines.push(`- Site Class ${hazard.siteClass} (${hazard.siteDescription ?? ''})`)
+  }
+  if (hazard.responseModificationR !== undefined) {
+    lines.push(
+      `- Response modification factor R = ${hazard.responseModificationR}, from ` +
+        'the weakest lateral system in the building',
+    )
+  }
+  if (hazard.approximatePeriod_s !== undefined) {
+    lines.push(
+      `- Approximate fundamental period: ${fixed(hazard.approximatePeriod_s, 2)} s`,
+    )
+  }
+  if (hazard.depth_m !== undefined) {
+    lines.push(`- Stillwater depth above grade: ${fixed(hazard.depth_m, 1)} m`)
+  }
+  if (hazard.velocity_ms !== undefined) {
+    lines.push(`- Flow velocity: ${fixed(hazard.velocity_ms, 1)} m/s`)
+  }
+
+  lines.push(`- Direction in plan: ${fixed(hazard.directionDeg, 0)} degrees`)
+  return lines
+}
+
+/**
  * Renders the context as a labelled plain-text block rather than raw JSON.
  * Small models quote prose facts back more reliably than they quote nested
  * JSON, and the units sit next to the numbers where they cannot be lost.
@@ -64,9 +123,7 @@ export function renderFacts(context: CritiqueContext): string {
 
   const lines: string[] = [
     'HAZARD',
-    `- Wind gust speed: ${fixed(hazard.gustSpeed_kmh, 0)} km/h`,
-    `- Direction in plan: ${fixed(hazard.directionDeg, 0)} degrees`,
-    `- Exposure category ${hazard.exposureCategory} (${hazard.exposureDescription})`,
+    ...hazardLines(hazard),
     '',
     'BUILDING',
     `- ${building.storeyCount} storeys, ${fixed(building.totalHeight_m, 1)} m tall`,
@@ -80,6 +137,12 @@ export function renderFacts(context: CritiqueContext): string {
     `- Safety factor: ${fixed(score.safetyFactor, 2)} (target ${fixed(limits.targetSafetyFactor, 2)})`,
     `- Factor of safety against overturning: ${fixed(stability.factorOfSafetyOverturning, 2)}`,
     `- Factor of safety against sliding: ${fixed(stability.factorOfSafetySliding, 2)}`,
+    ...(stability.factorOfSafetyFlotation === undefined
+      ? []
+      : [
+          `- Factor of safety against flotation: ${fixed(stability.factorOfSafetyFlotation, 2)}`,
+          `- Buoyant uplift from the water it displaces: ${fixed(stability.buoyancy_kN ?? 0, 0)} kN`,
+        ]),
     `- Worst storey drift: ${driftText(score.worstDriftDenominator)} (limit ${driftText(limits.driftLimitDenominator)})`,
     `- Base shear: ${fixed(stability.baseShear_kN, 1)} kN`,
     `- Overturning moment: ${fixed(stability.overturningMoment_kNm, 0)} kNm`,

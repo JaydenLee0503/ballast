@@ -105,7 +105,7 @@ export const BLUEPRINT_CAVEATS: readonly BlueprintNamedOption[] = [
     id: 'not-a-building',
     name: 'Not a building',
     description:
-      'This is not a building. The engine stacks storeys on a foundation and pushes wind sideways at them; a bridge, mast, dam or tunnel has a load path it does not represent at all, so treat what you see as a shape, not as an analysis.',
+      'This is not a building. The engine stacks storeys on a foundation and pushes a hazard sideways at them; a bridge, mast, dam or tunnel has a load path it does not represent at all, so treat what you see as a shape, not as an analysis.',
   },
   {
     id: 'long-span-roof',

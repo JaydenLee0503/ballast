@@ -28,13 +28,18 @@ import {
   FOUNDATION_TYPES,
   LATERAL_SYSTEMS,
   PLAN_SHAPES,
+  SITE_CLASSES,
   TYPOLOGIES,
   type ExposureCategory,
   type FacadeSystem,
   type FoundationType,
   type LateralSystem,
   type MaterialLibrary,
+  type FloodHazard,
+  type Hazard,
   type PlanShape,
+  type SeismicHazard,
+  type SiteClass,
   type Storey,
   type Structure,
   type Typology,
@@ -43,8 +48,12 @@ import {
 import {
   ANCHOR_CAPACITY_LIMITS_KN,
   EMBEDMENT_DEPTH_LIMITS_M,
+  FLOOD_DEPTH_LIMITS_M,
+  FLOW_VELOCITY_LIMITS_MS,
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
+  SEISMIC_S1_LIMITS_G,
+  SEISMIC_SS_LIMITS_G,
   STOREY_COUNT_LIMITS,
   STOREY_HEIGHT_LIMITS_M,
   withinLimits,
@@ -55,16 +64,25 @@ import {
  * Bump when the shape changes incompatibly.
  *
  * Version 2 added `Storey.facade`. Version 3 added `Structure.typology`.
- * Version 4 added `Storey.planShape`. Earlier designs are still readable, and
- * the migrations are the whole reason this file can say "reject, don't repair"
- * with a straight face — see `migrateStoreyFacade`, `migrateTypology` and
+ * Version 4 added `Storey.planShape`. Version 5 let `hazard` be an earthquake
+ * or a flood as well as a wind. Earlier designs are still readable, and the
+ * migrations are the whole reason this file can say "reject, don't repair" with
+ * a straight face — see `migrateStoreyFacade`, `migrateTypology` and
  * `migratePlanShape` below for why the defaults they pick are the only honest
  * ones.
+ *
+ * VERSION 5 NEEDS NO MIGRATION, which is the useful thing about it. Every
+ * design written by versions 1 through 4 carried `hazard.kind === 'wind'`,
+ * because wind was the only hazard that existed; they parse through the wind
+ * branch below unchanged and read back with exactly the numbers they were saved
+ * with. What the bump buys is the other direction: a version-5 file may contain
+ * a seismic or flood hazard, and an older build should refuse it by number
+ * rather than fail somewhere deeper.
  */
-export const DESIGN_SCHEMA_VERSION = 4
+export const DESIGN_SCHEMA_VERSION = 5
 
 /** Versions this build can read. Anything else is refused by number. */
-const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4]
+const READABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4, 5]
 
 /**
  * A version-1 storey has no `facade` field, because version 1 had no concept
@@ -122,7 +140,7 @@ export interface SavedDesign {
   /** ISO-8601. Display and ordering only; never an input to a calculation. */
   savedAt: string
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 export class DesignParseError extends Error {
@@ -264,17 +282,20 @@ function parseStructure(
   }
 }
 
-function parseHazard(value: unknown): WindHazard {
-  const raw = requireObject(value, 'hazard')
-  if (raw['kind'] !== 'wind') {
-    // Seismic, flood and wildfire join the union later. Until they exist,
-    // a payload claiming one of them is from a future version, not this one.
-    fail(`hazard.kind "${String(raw['kind'])}" is not a hazard this build can analyse`)
-  }
+/**
+ * A bearing, wrapped rather than rejected: a bearing is periodic, so 370 is a
+ * legible way of writing 10 rather than a corrupt value. Matches the store's
+ * `setDirection`, which is the point — one rule, two readers.
+ */
+function parseDirection(raw: Record<string, unknown>): number {
   const direction = raw['directionDeg']
   if (typeof direction !== 'number' || !Number.isFinite(direction)) {
     fail(`hazard.directionDeg must be a finite number, got ${String(direction)}`)
   }
+  return ((direction % 360) + 360) % 360
+}
+
+function parseWindHazard(raw: Record<string, unknown>): WindHazard {
   const roughness = raw['terrainRoughness']
   if (typeof roughness !== 'number' || !Number.isFinite(roughness) || roughness <= 0) {
     fail(`hazard.terrainRoughness must be a positive number, got ${String(roughness)}`)
@@ -286,10 +307,62 @@ function parseHazard(value: unknown): WindHazard {
       'hazard.gustSpeed_kmh',
       GUST_SPEED_LIMITS_KMH,
     ),
-    // Wrapped, not rejected: a bearing is periodic, so 370 is a legible way of
-    // writing 10 rather than a corrupt value. Matches the store's setDirection.
-    directionDeg: ((direction % 360) + 360) % 360,
+    directionDeg: parseDirection(raw),
     terrainRoughness: roughness,
+  }
+}
+
+function parseSeismicHazard(raw: Record<string, unknown>): SeismicHazard {
+  return {
+    kind: 'seismic',
+    Ss_g: requireBounded(raw['Ss_g'], 'hazard.Ss_g', SEISMIC_SS_LIMITS_G),
+    S1_g: requireBounded(raw['S1_g'], 'hazard.S1_g', SEISMIC_S1_LIMITS_G),
+    // Refused by name, not defaulted to a stiff site. Substituting a site class
+    // would rewrite the ground motion the design was checked against, which is
+    // the same failure as substituting an unknown material.
+    siteClass: requireMember<SiteClass>(
+      raw['siteClass'],
+      'hazard.siteClass',
+      SITE_CLASSES,
+    ),
+    directionDeg: parseDirection(raw),
+  }
+}
+
+function parseFloodHazard(raw: Record<string, unknown>): FloodHazard {
+  return {
+    kind: 'flood',
+    depth_m: requireBounded(raw['depth_m'], 'hazard.depth_m', FLOOD_DEPTH_LIMITS_M),
+    velocity_ms: requireBounded(
+      raw['velocity_ms'],
+      'hazard.velocity_ms',
+      FLOW_VELOCITY_LIMITS_MS,
+    ),
+    directionDeg: parseDirection(raw),
+  }
+}
+
+/**
+ * Parse, don't cast, applied to a discriminated union: the `kind` is checked
+ * first and then only the fields that kind actually has are read. A payload
+ * that claims to be a flood and also carries a gust speed loses the gust speed
+ * here rather than carrying it into the store.
+ */
+function parseHazard(value: unknown): Hazard {
+  const raw = requireObject(value, 'hazard')
+  switch (raw['kind']) {
+    case 'wind':
+      return parseWindHazard(raw)
+    case 'seismic':
+      return parseSeismicHazard(raw)
+    case 'flood':
+      return parseFloodHazard(raw)
+    default:
+      // Wildfire was always the next candidate; until it exists, a payload
+      // claiming it is from a future version, not this one.
+      fail(
+        `hazard.kind "${String(raw['kind'])}" is not a hazard this build can analyse`,
+      )
   }
 }
 
@@ -297,7 +370,7 @@ function parseHazard(value: unknown): WindHazard {
 export function createSavedDesign(
   name: string,
   structure: Structure,
-  hazard: WindHazard,
+  hazard: Hazard,
   savedAt: Date,
 ): SavedDesign {
   return {

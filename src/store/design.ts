@@ -17,8 +17,12 @@ import {
   ANCHOR_CAPACITY_LIMITS_KN,
   clamp,
   EMBEDMENT_DEPTH_LIMITS_M,
+  FLOOD_DEPTH_LIMITS_M,
+  FLOW_VELOCITY_LIMITS_MS,
   GUST_SPEED_LIMITS_KMH,
   PLAN_WIDTH_LIMITS_M,
+  SEISMIC_S1_LIMITS_G,
+  SEISMIC_SS_LIMITS_G,
   STOREY_COUNT_LIMITS,
   STOREY_HEIGHT_LIMITS_M,
   TAPER_LIMITS,
@@ -27,8 +31,12 @@ import type { SavedDesign } from '@/persistence'
 import type {
   ExposureCategory,
   FacadeSystem,
+  FloodHazard,
+  Hazard,
   LateralSystem,
   PlanShape,
+  SeismicHazard,
+  SiteClass,
   Storey,
   Structure,
   Typology,
@@ -61,13 +69,80 @@ export const DEFAULT_STRUCTURE: Structure = {
   exposureCategory: 'C',
 }
 
-export const DEFAULT_HAZARD: WindHazard = {
+export const DEFAULT_WIND_HAZARD: WindHazard = {
   kind: 'wind',
   gustSpeed_kmh: 150,
   directionDeg: 0,
   // 0.02 m is open terrain, the roughness the engine associates with
   // Exposure C — consistent with DEFAULT_STRUCTURE, so no warning on load.
   terrainRoughness: 0.02,
+}
+
+/**
+ * A serious but not extraordinary earthquake: roughly what the ASCE 7 maps show
+ * for Seattle or Salt Lake City rather than for a near-fault site in
+ * California, on the stiff soil most buildings sit on.
+ *
+ * Chosen the same way the 150 km/h gust was, and against the same test: the
+ * design the studio opens with should have to work for it without everything
+ * being red on arrival. At these accelerations the starting CLT block comes out
+ * just over the drift limit — so clicking "Earthquake" immediately shows the
+ * lesson the three hazards exist for (the block that sails through a gale does
+ * not sail through a quake), and widening the plan, bracing it, or taking a
+ * floor off all get it back. The top of the slider is the near-fault case, and
+ * that one is genuinely hard, which is honest.
+ */
+export const DEFAULT_SEISMIC_HAZARD: SeismicHazard = {
+  kind: 'seismic',
+  Ss_g: 0.8,
+  S1_g: 0.3,
+  siteClass: 'D',
+  directionDeg: 0,
+}
+
+/**
+ * Two metres of moving water: a bad riverine flood, above the ground floor and
+ * well inside the range where the model is honest. Deep enough that a light
+ * building starts to float, which is the lesson this hazard is here for.
+ */
+export const DEFAULT_FLOOD_HAZARD: FloodHazard = {
+  kind: 'flood',
+  depth_m: 2,
+  velocity_ms: 1.5,
+  directionDeg: 0,
+}
+
+/**
+ * The hazard the studio opens with.
+ *
+ * Deliberately typed as the wind hazard it is rather than widened to `Hazard`:
+ * everything that reaches for "the default" — the starting baseline, the
+ * fixtures, `reset()` — wants the storm specifically, and widening the type
+ * here would make every one of them narrow it again at the call site.
+ */
+export const DEFAULT_HAZARD = DEFAULT_WIND_HAZARD
+
+/**
+ * The settings each hazard is remembered at while another one is selected.
+ *
+ * Switching from a 250 km/h gale to a flood and back should return the gale,
+ * not the default. A student comparing how one building copes with three
+ * different events is doing exactly the thing this app is for, and making them
+ * re-dial the storm each time would quietly discourage it.
+ *
+ * Keyed by kind, so the store holds one live `hazard` — which is what the
+ * analysis memoises on — plus the two that are currently set aside.
+ */
+export interface HazardSettings {
+  wind: WindHazard
+  seismic: SeismicHazard
+  flood: FloodHazard
+}
+
+export const DEFAULT_HAZARD_SETTINGS: HazardSettings = {
+  wind: DEFAULT_WIND_HAZARD,
+  seismic: DEFAULT_SEISMIC_HAZARD,
+  flood: DEFAULT_FLOOD_HAZARD,
 }
 
 /**
@@ -80,7 +155,7 @@ export const DEFAULT_HAZARD: WindHazard = {
 export interface Baseline {
   label: string
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 export const STARTING_BASELINE: Baseline = {
@@ -91,7 +166,12 @@ export const STARTING_BASELINE: Baseline = {
 
 export interface DesignState {
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
+  /**
+   * The other two hazards, at whatever the student last set them to. See
+   * `HazardSettings`. Never analysed — only `hazard` is.
+   */
+  hazardSettings: HazardSettings
   baseline: Baseline
   /** Which storey the controls edit. `null` means "all storeys at once". */
   selectedStoreyIndex: number | null
@@ -116,9 +196,32 @@ export interface DesignState {
 
   selectStorey: (index: number | null) => void
 
+  /**
+   * Swap which hazard the building is being analysed against.
+   *
+   * The *structure* is deliberately untouched. The whole point of three hazards
+   * is that the same building meets all of them: a tall light tower that sails
+   * through a flood is the one an earthquake finds easiest to shake, and you
+   * only see that if the design stays put while the event changes.
+   *
+   * The hazard being replaced is stashed in `hazardSettings` so coming back to
+   * it returns the storm the student dialled rather than the default one.
+   */
+  setHazardKind: (kind: Hazard['kind']) => void
+
+  /** Wind only. A no-op under another hazard rather than a type error. */
   setGustSpeed: (gustSpeed_kmh: number) => void
+  /** Every hazard has a bearing: the gust, the shaking and the current. */
   setDirection: (directionDeg: number) => void
   setExposure: (category: ExposureCategory) => void
+
+  /** Seismic only: the mapped accelerations, and what the soil does to them. */
+  setSeismicAcceleration: (Ss_g: number, S1_g: number) => void
+  setSiteClass: (siteClass: SiteClass) => void
+
+  /** Flood only. */
+  setFloodDepth: (depth_m: number) => void
+  setFlowVelocity: (velocity_ms: number) => void
 
   addStorey: () => void
   removeStorey: () => void
@@ -334,19 +437,75 @@ function retaper(
 export const useDesignStore = create<DesignState>()((set, get) => ({
   structure: DEFAULT_STRUCTURE,
   hazard: DEFAULT_HAZARD,
+  hazardSettings: DEFAULT_HAZARD_SETTINGS,
   baseline: STARTING_BASELINE,
   selectedStoreyIndex: null,
   taper: 0,
 
   selectStorey: (index) => set({ selectedStoreyIndex: index }),
 
+  setHazardKind: (kind) =>
+    set((state) => {
+      if (kind === state.hazard.kind) return state
+      return {
+        // Put the outgoing hazard back in the drawer, take the incoming one
+        // out. Both halves in one update, so the two can never disagree about
+        // which hazard is live.
+        hazardSettings: { ...state.hazardSettings, [state.hazard.kind]: state.hazard },
+        hazard: state.hazardSettings[kind],
+      }
+    }),
+
   setGustSpeed: (gustSpeed_kmh) =>
-    set((state) => ({
-      hazard: {
-        ...state.hazard,
-        gustSpeed_kmh: clamp(gustSpeed_kmh, GUST_SPEED_LIMITS_KMH),
-      },
-    })),
+    set((state) => {
+      // Guarded rather than typed away: the controls only render this slider
+      // for a wind hazard, and a store action that silently wrote a gust speed
+      // onto a flood would be a bug nothing caught.
+      if (state.hazard.kind !== 'wind') return state
+      return {
+        hazard: {
+          ...state.hazard,
+          gustSpeed_kmh: clamp(gustSpeed_kmh, GUST_SPEED_LIMITS_KMH),
+        },
+      }
+    }),
+
+  setSeismicAcceleration: (Ss_g, S1_g) =>
+    set((state) => {
+      if (state.hazard.kind !== 'seismic') return state
+      return {
+        hazard: {
+          ...state.hazard,
+          Ss_g: clamp(Ss_g, SEISMIC_SS_LIMITS_G),
+          S1_g: clamp(S1_g, SEISMIC_S1_LIMITS_G),
+        },
+      }
+    }),
+
+  setSiteClass: (siteClass) =>
+    set((state) => {
+      if (state.hazard.kind !== 'seismic') return state
+      return { hazard: { ...state.hazard, siteClass } }
+    }),
+
+  setFloodDepth: (depth_m) =>
+    set((state) => {
+      if (state.hazard.kind !== 'flood') return state
+      return {
+        hazard: { ...state.hazard, depth_m: clamp(depth_m, FLOOD_DEPTH_LIMITS_M) },
+      }
+    }),
+
+  setFlowVelocity: (velocity_ms) =>
+    set((state) => {
+      if (state.hazard.kind !== 'flood') return state
+      return {
+        hazard: {
+          ...state.hazard,
+          velocity_ms: clamp(velocity_ms, FLOW_VELOCITY_LIMITS_MS),
+        },
+      }
+    }),
 
   setDirection: (directionDeg) =>
     set((state) => ({
@@ -578,9 +737,16 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     set((state) => ({ structure: withAllStoreys(state.structure, { facade }) })),
 
   loadDesign: (design) =>
-    set({
+    set((state) => ({
       structure: design.structure,
       hazard: design.hazard,
+      // The design's own hazard becomes what switching away and back returns
+      // to, so opening a flood design and glancing at the wind does not lose
+      // the flood the design was built for.
+      hazardSettings: {
+        ...state.hazardSettings,
+        [design.hazard.kind]: design.hazard,
+      },
       // Opening a design also moves the baseline to it. The question a student
       // has after opening someone else's work is "what did *my* changes do",
       // not "how does this differ from a default they never saw".
@@ -596,7 +762,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       // control describes what is on screen rather than what the last design
       // happened to be set to.
       taper: deriveTaper(design.structure),
-    }),
+    })),
 
   pinBaseline: () =>
     set((state) => ({
@@ -613,6 +779,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     set({
       structure: DEFAULT_STRUCTURE,
       hazard: DEFAULT_HAZARD,
+      hazardSettings: DEFAULT_HAZARD_SETTINGS,
       baseline: STARTING_BASELINE,
       selectedStoreyIndex: null,
       taper: 0,

@@ -13,11 +13,49 @@
  * describe it in words rather than reach for a value.
  */
 
+/**
+ * The event, as the model is allowed to see it.
+ *
+ * A flat record rather than a discriminated union, with the fields that do not
+ * apply simply absent — because `guard.ts` walks this object for numbers by
+ * field name, and a union would need every branch spelled out there too. What
+ * matters is that every numeric field still carries its unit suffix: rename
+ * `depth_m` to `depth` and the guard quietly stops being able to check a figure
+ * the model quotes about it.
+ *
+ * `kind` and `description` are the only strings that decide anything: the
+ * prompt reads them to say which event it is talking about.
+ */
 export interface CritiqueHazard {
-  gustSpeed_kmh: number
+  kind: string
+  /** One sentence naming the event, for the top of the fact sheet. */
+  description: string
+  /** Which way it acts, in the plan frame. Dimensionless by convention here. */
   directionDeg: number
-  exposureCategory: string
-  exposureDescription: string
+
+  /** Wind only. */
+  gustSpeed_kmh?: number
+  exposureCategory?: string
+  exposureDescription?: string
+
+  /** Seismic only. */
+  Ss_g?: number
+  S1_g?: number
+  SDS_g?: number
+  SD1_g?: number
+  siteClass?: string
+  siteDescription?: string
+  /**
+   * ASCE 7-16 R, deliberately NOT named `...Factor`: `bucketForKey` files
+   * anything matching /factor/ with the safety factors, and an R of 5 sitting
+   * in that bucket would excuse a model that invented "a safety factor of 5".
+   */
+  responseModificationR?: number
+  approximatePeriod_s?: number
+
+  /** Flood only. */
+  depth_m?: number
+  velocity_ms?: number
 }
 
 export interface CritiqueBuilding {
@@ -51,10 +89,19 @@ export interface CritiqueStability {
   factorOfSafetyOverturning: number
   factorOfSafetySliding: number
   totalSelfWeight_kN: number
+  /** Flood only: the uplift, and the check it drives. */
+  buoyancy_kN?: number
+  factorOfSafetyFlotation?: number
 }
 
 export interface CritiqueLimits {
   targetSafetyFactor: number
+  /**
+   * Denominator form of the limit THIS analysis used, not a constant: wind is
+   * checked at h/500 and an earthquake at h/50, so a fixed 500 here would have
+   * the model telling a student their seismic drift was ten times over a limit
+   * it was never measured against.
+   */
   driftLimitDenominator: number
 }
 

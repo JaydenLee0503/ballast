@@ -62,5 +62,8 @@ export const BAND_LABEL: Readonly<Record<UtilizationBand, string>> = {
   fail: 'Over limit',
 }
 
-/** Wind arrows. Not a utilisation colour; kept here so the palette is in one file. */
-export const WIND_HEX = '#60a5fa'
+// Hazard colours used to live here as WIND_HEX. They moved to `lib/hazard.ts`
+// when there were three of them, because they are copy about the event rather
+// than a reading of the building — and keeping them out of this file is what
+// stops a restyle of the storm from being able to change what "over the limit"
+// looks like.

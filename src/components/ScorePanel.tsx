@@ -20,7 +20,6 @@
  */
 
 import {
-  DRIFT_LIMIT_RATIO,
   TARGET_SAFETY_FACTOR,
   grossFloorArea_m2,
   type AnalysisResult,
@@ -37,12 +36,17 @@ import {
   formatUsd,
 } from '@/lib/format.ts'
 import { BAND_HEX, BAND_INK_HEX, utilizationBand } from '@/lib/palette.ts'
+import { HAZARD_LABEL } from '@/lib/hazard.ts'
 
 const FAILURE_MODE_LABEL: Readonly<Record<FailureMode, string>> = {
   overturning: 'Overturning',
   sliding: 'Sliding at the base',
   drift: 'Excessive drift',
   'storey-strength': 'Storey strength',
+  // Flood only. It is its own mode rather than a term inside overturning
+  // because the fix is different: a building about to float has to be made
+  // heavier or anchored down, not braced.
+  flotation: 'Floating off its foundation',
   none: 'No limit exceeded',
 }
 
@@ -149,7 +153,10 @@ export function ScorePanel({
   const safetyUtilization = Number.isFinite(scoreCard.safetyFactor)
     ? TARGET_SAFETY_FACTOR / scoreCard.safetyFactor
     : 0
-  const driftUtilization = scoreCard.driftRatio / DRIFT_LIMIT_RATIO
+  // The limit this analysis was run against, not a constant: an earthquake is
+  // checked at 0.020h and a storm at h/500, and printing the wind limit beside
+  // a seismic drift would make a passing design look ten times over.
+  const driftUtilization = scoreCard.driftRatio / result.driftLimitRatio
   const failing = scoreCard.governingFailureMode !== 'none'
 
   return (
@@ -163,7 +170,7 @@ export function ScorePanel({
         }}
       >
         <span className="font-pixel text-[0.7rem] tracking-widest opacity-70">
-          GOVERNING
+          GOVERNING · {HAZARD_LABEL[result.hazardKind].toUpperCase()}
         </span>
         <div className="font-display text-base">
           {FAILURE_MODE_LABEL[scoreCard.governingFailureMode]}
@@ -182,7 +189,7 @@ export function ScorePanel({
         <Dial
           label="Worst drift"
           value={formatDriftRatio(scoreCard.driftRatio)}
-          sub={`limit ${formatDriftRatio(DRIFT_LIMIT_RATIO)}`}
+          sub={`limit ${formatDriftRatio(result.driftLimitRatio)}`}
           utilization={driftUtilization}
           delta={comparison?.driftRatio}
         />
@@ -250,7 +257,11 @@ export function ScorePanel({
         {[
           ['Storeys', String(structure.storeys.length)],
           ['Floor area', `${Math.round(floorArea_m2).toLocaleString('en-US')} m²`],
-          ['Overturning', formatSafetyFactor(stability.factorOfSafetyOverturning)],
+          // A flood has a third global check and it is the interesting one, so
+          // it takes the slot rather than being hidden behind overturning.
+          stability.factorOfSafetyFlotation === undefined
+            ? ['Overturning', formatSafetyFactor(stability.factorOfSafetyOverturning)]
+            : ['Flotation', formatSafetyFactor(stability.factorOfSafetyFlotation)],
         ].map(([label, value]) => (
           <div key={label}>
             <dt className="font-pixel text-[0.65rem] uppercase tracking-widest text-ink/45">

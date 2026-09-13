@@ -60,7 +60,9 @@ describe('a good link', () => {
     const state = useDesignStore.getState()
     expect(state.structure.storeys).toHaveLength(9)
     expect(state.structure.storeys[0]?.materialId).toBe('structural-steel')
-    expect(state.hazard.gustSpeed_kmh).toBe(210)
+    // Narrowed rather than asserted: `hazard` is a union now, and a shared
+    // design that arrived as something other than a storm should fail loudly.
+    expect(state.hazard.kind === 'wind' && state.hazard.gustSpeed_kmh).toBe(210)
   })
 
   it('clears the fragment but keeps the path and query', () => {

@@ -11,8 +11,10 @@ import type {
   ExposureCategory,
   FacadeSystem,
   FoundationType,
+  Hazard,
   LateralSystem,
   PlanShape,
+  SiteClass,
   StructuralClass,
   Typology,
 } from './types.ts'
@@ -78,6 +80,15 @@ export const FACADE_SYSTEMS = exhaustiveList<FacadeSystem>()([
   'punched',
   'ribbon',
   'curtain-wall',
+])
+
+export const SITE_CLASSES = exhaustiveList<SiteClass>()(['A', 'B', 'C', 'D', 'E'])
+
+/** The hazards `analyze()` can dispatch on, at runtime. */
+export const HAZARD_KINDS = exhaustiveList<Hazard['kind']>()([
+  'wind',
+  'seismic',
+  'flood',
 ])
 
 // ---------------------------------------------------------------------------
@@ -514,3 +525,315 @@ export const BUILDABLE_SYSTEMS: Readonly<
   masonry: new Set<LateralSystem>(['shear-wall', 'none']),
   earth: new Set<LateralSystem>(['shear-wall', 'none']),
 }
+
+// ---------------------------------------------------------------------------
+// Seismic: ASCE 7-16 Equivalent Lateral Force procedure (Ch. 11-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scope of the seismic model, stated once here so the rest can be terse.
+ *
+ *   - Equivalent Lateral Force procedure (ASCE 7-16 §12.8) only. No modal
+ *     response spectrum analysis, no time history, no soil-structure
+ *     interaction.
+ *   - One horizontal direction at a time, at the bearing the student picks.
+ *     A real earthquake shakes in every direction at once and ASCE 7 §12.5
+ *     requires orthogonal combinations for some systems; this engine evaluates
+ *     the single direction, which is the same simplification the wind side
+ *     makes and for the same reason.
+ *   - No vertical ground motion (§12.4.2.2), no accidental torsion
+ *     (§12.8.4.2), no redundancy factor rho, no irregularity checks.
+ *   - Effective seismic weight W is the structural frame plus the facade,
+ *     because that is the whole of the dead load this engine knows. ASCE 7-16
+ *     §12.7.2 would also include partitions, permanent equipment and, in a
+ *     warehouse, 25% of the storage live load. W here is therefore low, which
+ *     makes the base shear low: this is the one place the seismic branch is
+ *     unconservative, and `analyze()` says so in a warning.
+ */
+
+/**
+ * Site coefficient Fa, ASCE 7-16 Table 11.4-1, keyed on site class and the
+ * mapped short-period acceleration Ss. Interpolated linearly between the
+ * tabulated Ss values, per the note on the table, and clamped outside them.
+ *
+ * The pattern is the lesson: on hard rock (A, B) the coefficient is below 1
+ * and soft soil (D, E) amplifies — dramatically at low Ss, where E nearly
+ * triples the motion. That is why the same earthquake flattens one
+ * neighbourhood and leaves the next one standing.
+ *
+ * ASCE 7-16 marks Site Class E as requiring a site-specific ground motion
+ * analysis above Ss = 0.75 (note a on the table). This engine clamps to the
+ * last tabulated value there and `analyze()` warns, rather than refusing to
+ * produce a result a student is looking at a slider for.
+ */
+export const FA_SS_POINTS: readonly number[] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5]
+
+export const FA_TABLE: Readonly<Record<SiteClass, readonly number[]>> = {
+  A: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  B: [0.9, 0.9, 0.9, 0.9, 0.9, 0.9],
+  C: [1.3, 1.3, 1.2, 1.2, 1.2, 1.2],
+  D: [1.6, 1.4, 1.2, 1.1, 1.0, 1.0],
+  // Values above Ss = 0.75 are note (a) in the standard: site-specific study
+  // required. Held flat at the last tabulated number, with a warning.
+  E: [2.4, 1.7, 1.3, 1.3, 1.3, 1.3],
+}
+
+/**
+ * Site coefficient Fv, ASCE 7-16 Table 11.4-2, keyed on site class and the
+ * mapped one-second acceleration S1. Same treatment as Fa above.
+ *
+ * ASCE 7-16 note (b) requires a site-specific analysis for Site Class D and E
+ * at S1 >= 0.2; the tabulated values are kept here and `analyze()` warns.
+ */
+export const FV_S1_POINTS: readonly number[] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
+export const FV_TABLE: Readonly<Record<SiteClass, readonly number[]>> = {
+  A: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  B: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  C: [1.5, 1.5, 1.5, 1.5, 1.5, 1.4],
+  D: [2.4, 2.2, 2.0, 1.9, 1.8, 1.7],
+  E: [4.2, 3.3, 2.8, 2.4, 2.2, 2.0],
+}
+
+/** Above this S1, Site Classes D and E need a site-specific study (note b). */
+export const SITE_SPECIFIC_S1_THRESHOLD_G = 0.2
+/** Above this Ss, Site Class E needs a site-specific study (note a). */
+export const SITE_SPECIFIC_E_SS_THRESHOLD_G = 0.75
+
+/** Design accelerations are two thirds of the MCE_R values. §11.4.4. */
+export const DESIGN_ACCELERATION_FRACTION = 2 / 3
+
+/**
+ * Seismic design coefficients per lateral system: the response modification
+ * factor R and the deflection amplification factor Cd, ASCE 7-16 Table 12.2-1.
+ *
+ * R is the ductility discount: a system that can yield repeatedly without
+ * losing its footing is designed for a fraction of the elastic force, because
+ * it is expected to absorb the rest by deforming. That is why a moment frame
+ * (R = 8) is designed for a quarter of the force a shear wall building
+ * (R = 5) is — and why the moment frame then has to be checked for drift it
+ * will actually experience, which is what Cd puts back.
+ *
+ *   shear-wall    Special reinforced concrete shear wall, bearing wall system
+ *                 (Table 12.2-1 A.1): R = 5, Cd = 5.
+ *   braced-frame  Steel special concentrically braced frame, building frame
+ *                 system (B.2): R = 6, Cd = 5.
+ *   moment-frame  Steel special moment frame (C.1): R = 8, Cd = 5.5.
+ *
+ * `none` is OFF THE TABLE, and deliberately so: ASCE 7 has no entry for a
+ * building with no lateral force resisting system, because such a building may
+ * not be built in any seismic design category. R = 1.25 is the lowest value the
+ * standard assigns anywhere (Table 15.4-2, for nonbuilding structures not
+ * similar to buildings), used here so that "no system" produces a force close
+ * to the unreduced elastic one rather than a number implying ductility that
+ * does not exist. It is a calibration choice, not a code value.
+ */
+export interface SeismicSystemFactors {
+  /** Response modification coefficient, dimensionless. */
+  readonly R: number
+  /** Deflection amplification factor, dimensionless. */
+  readonly Cd: number
+}
+
+export const SEISMIC_SYSTEM_FACTORS: Readonly<
+  Record<LateralSystem, SeismicSystemFactors>
+> = {
+  'shear-wall': { R: 5, Cd: 5 },
+  'braced-frame': { R: 6, Cd: 5 },
+  'moment-frame': { R: 8, Cd: 5.5 },
+  none: { R: 1.25, Cd: 1.25 },
+}
+
+/**
+ * Importance factor Ie. ASCE 7-16 Table 1.5-2, Risk Category II — ordinary
+ * buildings, which is everything this app lets a student describe.
+ *
+ * ASSUMPTION: a hospital or a fire station is Risk Category IV with Ie = 1.5,
+ * a 50% increase in design force. `Structure.typology` would be the natural
+ * hook for that, and it deliberately is not wired to one — see the note on
+ * `Typology`: a typology must never silently become a coefficient.
+ */
+export const IMPORTANCE_FACTOR_IE = 1.0
+
+/**
+ * Approximate fundamental period parameters, ASCE 7-16 Table 12.8-2, in SI:
+ *   Ta = Ct * h^x        [s, h in metres]
+ *
+ *   Steel moment-resisting frames          Ct = 0.0724, x = 0.8
+ *   Concrete moment-resisting frames       Ct = 0.0466, x = 0.9
+ *   All other structural systems           Ct = 0.0488, x = 0.75
+ *
+ * The period matters because it decides which branch of the design spectrum
+ * the building sits on: short and stiff means the flat SDS plateau, tall and
+ * flexible means the descending SD1/T branch and a lower design force. It is
+ * the reason a tall building is not simply a short building scaled up.
+ */
+export interface PeriodParameters {
+  readonly Ct: number
+  readonly x: number
+}
+
+export const PERIOD_STEEL_MOMENT_FRAME: PeriodParameters = { Ct: 0.0724, x: 0.8 }
+export const PERIOD_CONCRETE_MOMENT_FRAME: PeriodParameters = { Ct: 0.0466, x: 0.9 }
+export const PERIOD_OTHER: PeriodParameters = { Ct: 0.0488, x: 0.75 }
+
+/**
+ * Long-period transition period TL, ASCE 7-16 Fig. 22-14. Ranges from 4 s to
+ * 16 s across the United States; 8 s covers most of it.
+ *
+ * ASSUMPTION: fixed, because it is a map value and there is no site here.
+ * Nothing a student can build gets near it — TL only governs above T = 8 s,
+ * which is a 100-storey building — so this is a completeness term rather than
+ * a live one.
+ */
+export const LONG_PERIOD_TRANSITION_S = 8
+
+/**
+ * Seismic response coefficient floors, ASCE 7-16 Eqs. 12.8-5 and 12.8-6:
+ *   Cs >= 0.044 * SDS * Ie,  and never less than 0.01
+ *   Cs >= 0.5 * S1 / (R/Ie)  where S1 >= 0.6 g
+ * The floors are what stop a very flexible building being designed for nothing.
+ */
+export const CS_MINIMUM_SDS_FACTOR = 0.044
+export const CS_ABSOLUTE_MINIMUM = 0.01
+export const CS_HIGH_S1_THRESHOLD_G = 0.6
+export const CS_HIGH_S1_FACTOR = 0.5
+
+/**
+ * Vertical distribution exponent k, ASCE 7-16 §12.8.3:
+ *   k = 1 for T <= 0.5 s, k = 2 for T >= 2.5 s, linear between.
+ * k = 1 spreads the force in proportion to weight x height — an inverted
+ * triangle. k = 2 pushes more of it to the top, which is what a long-period
+ * building actually does.
+ */
+export const K_EXPONENT_LOW_PERIOD_S = 0.5
+export const K_EXPONENT_HIGH_PERIOD_S = 2.5
+
+/**
+ * Allowable storey drift under the design earthquake, ASCE 7-16 Table 12.12-1,
+ * "all other structures", Risk Category I or II: 0.020 * h.
+ *
+ * Ten times looser than the wind limit in this file, and that is not an
+ * inconsistency: the wind check is serviceability — a building that sways
+ * enough to crack plaster and frighten occupants every winter — while the
+ * seismic check is life safety under an event expected once in a building's
+ * life, where yielding is the design intent rather than a failure.
+ */
+export const SEISMIC_DRIFT_LIMIT_RATIO = 0.02
+
+/**
+ * Above this storey count, the equal-displacement assumption behind Cd and the
+ * single-mode ELF procedure both get shaky: ASCE 7-16 Table 12.6-1 requires a
+ * modal analysis for many structures over about 48 m, which at a 3.5 m storey
+ * is roughly here.
+ */
+export const ELF_STOREY_LIMIT = 14
+
+// ---------------------------------------------------------------------------
+// Flood: ASCE 7-16 Ch. 5, with the commentary's hydrodynamic treatment
+// ---------------------------------------------------------------------------
+
+/**
+ * Scope of the flood model.
+ *
+ *   - Hydrostatic lateral pressure on the submerged part of the windward face,
+ *     with a dry interior. A building that is allowed to flood inside (wet
+ *     floodproofing, ASCE 24 §2.6) equalises and sees almost none of this; a
+ *     dry-floodproofed one sees all of it. The dry case is modelled because it
+ *     is the one that fails.
+ *   - Hydrodynamic drag from the flow, per ASCE 7-16 Eq. C5.4-3.
+ *   - Buoyancy on the displaced volume, which is what actually lifts light
+ *     buildings off their foundations.
+ *   - NOT MODELLED: breaking wave loads (§5.4.4, which dominate in a coastal
+ *     V zone and can be several times the hydrostatic force), debris impact
+ *     (§5.4.5), scour and erosion of the soil under the footing, buoyancy of
+ *     saturated soil reducing friction, and any of it acting together with
+ *     wind. `analyze()` warns about all of these.
+ */
+
+/**
+ * Unit weight of fresh water at 4 degC. ASCE 7-16 §5.4.2 uses 62.4 lb/ft^3
+ * (9.81 kN/m^3) for fresh water and 64.0 (10.05) for salt water.
+ *
+ * ASSUMPTION: fresh. A coastal flood is about 2.5% heavier, which is inside
+ * the noise of everything else here.
+ */
+export const WATER_UNIT_WEIGHT_KN_M3 = 9.81
+
+/**
+ * Drag coefficient Cd for hydrodynamic load, ASCE 7-16 Table C5.4-1, keyed on
+ * the ratio of the obstructed width to the stillwater depth. A wide, shallow
+ * obstruction behaves more like a dam and less like a pier, so Cd rises.
+ *
+ * Stored as (width/depth, Cd) points and interpolated, where the standard
+ * tabulates bands; the interpolation is this engine's choice and is monotonic
+ * in the same direction as the bands.
+ */
+export const FLOOD_DRAG_COEFFICIENT_TABLE: ReadonlyArray<
+  readonly [widthOverDepth: number, cd: number]
+> = [
+  [12, 1.25],
+  [20, 1.3],
+  [32, 1.4],
+  [40, 1.5],
+  [65, 1.75],
+  [90, 1.8],
+  [91, 2.0],
+]
+
+/**
+ * Above this flow velocity the flood is better modelled as a hydraulic event
+ * with wave and debris loading than as the quasi-static case here. ASCE 7-16
+ * C5.4.3 notes that velocities above roughly 3 m/s in a riverine flood are
+ * usually accompanied by debris; it is a warning threshold, not a coefficient.
+ */
+export const HIGH_FLOW_VELOCITY_MS = 3
+
+/**
+ * Fraction of the gross enclosed volume that displaces water when submerged.
+ *
+ * CALIBRATION, not a code value. A real building floods through vents, doors,
+ * cracks and service penetrations long before it is fully submerged, and ASCE
+ * 24 requires openings in enclosures below the design flood elevation for
+ * exactly this reason. Taking the whole gross volume as displaced would model
+ * a sealed hull, which no building is; taking none would model a sieve, which
+ * a dry-floodproofed building also is not. 0.85 is the sealed-but-leaky middle,
+ * chosen so that a light timber building at three metres of water floats (which
+ * is the observed behaviour) and a heavy concrete one does not.
+ *
+ * It is the single biggest knob in the flood branch, in the same sense
+ * LATERAL_STIFFNESS_COEFFICIENT is for drift. Revisit it before quoting a
+ * flotation safety factor as anything but a teaching number.
+ */
+export const BUOYANT_VOLUME_FRACTION = 0.85
+
+// ---------------------------------------------------------------------------
+// Damage banding
+// ---------------------------------------------------------------------------
+
+/**
+ * Where one `DamageState` becomes the next, on the same dimensionless
+ * demand/capacity ratio that colours a storey.
+ *
+ * These are a BANDING OF A FIGURE THE ENGINE ALREADY PRODUCED, in the way
+ * `lib/palette.ts` bands the same number into three colours. They add no
+ * physics and they are not a damage model: a real one needs a fragility curve
+ * per component and a nonlinear analysis to drive it, and this engine is
+ * linear-elastic.
+ *
+ *   1.0  the limit itself. At or below it, nothing to draw.
+ *   1.5  half again past the limit. In a real design this is where the
+ *        elastic model's reserve — the conservatism in the section modulus,
+ *        the material factors — is plausibly used up.
+ *   2.5  more than double. Past here a linear-elastic result is not a
+ *        prediction of anything, and 'collapsed' is the honest label precisely
+ *        because no number would be.
+ *
+ * Deliberately coarse. Three bands, like the colours, so that the picture and
+ * the table cannot say different things.
+ */
+export const DAMAGE_THRESHOLDS = {
+  cracked: 1.0,
+  severe: 1.5,
+  collapsed: 2.5,
+} as const

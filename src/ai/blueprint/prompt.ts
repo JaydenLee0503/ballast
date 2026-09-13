@@ -25,7 +25,7 @@ export interface ChatMessage {
   content: string
 }
 
-export const BLUEPRINT_SYSTEM_PROMPT = `You are setting up a starting point in Ballast, a teaching simulator where a student takes a building, subjects it to a windstorm, and redesigns it to survive with less carbon and less money.
+export const BLUEPRINT_SYSTEM_PROMPT = `You are setting up a starting point in Ballast, a teaching simulator where a student takes a building, subjects it to a storm, an earthquake or a flood, and redesigns it to survive with less carbon and less money.
 
 The student has described a building they want to start from. Your job is to choose the INPUTS that describe it: how many storeys, how big each floor is, what it is made of, how it resists sideways load, what its skin is, and what it sits on. Nothing more.
 

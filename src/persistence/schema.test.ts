@@ -59,7 +59,7 @@ describe('round trip', () => {
 describe('version', () => {
   it('refuses a version it does not know, naming what it can read', () => {
     expect(() => parse(corrupt((d) => { d['schemaVersion'] = 99 })))
-      .toThrow(/unsupported schemaVersion 99.*1, 2, 3 and 4/s)
+      .toThrow(/unsupported schemaVersion 99.*1, 2, 3, 4 and 5/s)
   })
 
   it('refuses a missing version rather than assuming the current one', () => {
@@ -148,8 +148,61 @@ describe('enumerated fields', () => {
   })
 
   it('refuses a hazard kind this build cannot analyse', () => {
-    expect(() => parse(corrupt((d) => { d['hazard'].kind = 'seismic' })))
+    // Wildfire is the one that does not exist yet. Wind, seismic and flood all
+    // do, and each is parsed by its own branch below.
+    expect(() => parse(corrupt((d) => { d['hazard'].kind = 'wildfire' })))
       .toThrow(/not a hazard this build can analyse/)
+  })
+})
+
+/**
+ * Schema 5 let a design carry an earthquake or a flood. The rules are the ones
+ * the rest of this file already holds: parse the fields that kind actually has,
+ * refuse an unknown site class by name rather than substituting a stiff site,
+ * and bound every number by the same limits the sliders use.
+ */
+describe('the other two hazards', () => {
+  const seismic = {
+    kind: 'seismic',
+    Ss_g: 1.5,
+    S1_g: 0.6,
+    siteClass: 'D',
+    directionDeg: 0,
+  }
+  const flood = { kind: 'flood', depth_m: 2, velocity_ms: 1.5, directionDeg: 0 }
+
+  it('round-trips an earthquake', () => {
+    const parsed = parse(corrupt((d) => { d['hazard'] = { ...seismic } }))
+    expect(parsed.hazard).toEqual(seismic)
+    expect(() => analyze(parsed.structure, parsed.hazard, MATERIAL_LIBRARY)).not.toThrow()
+  })
+
+  it('round-trips a flood', () => {
+    const parsed = parse(corrupt((d) => { d['hazard'] = { ...flood } }))
+    expect(parsed.hazard).toEqual(flood)
+    expect(() => analyze(parsed.structure, parsed.hazard, MATERIAL_LIBRARY)).not.toThrow()
+  })
+
+  it('refuses an unknown site class by name rather than picking one', () => {
+    expect(() =>
+      parse(corrupt((d) => { d['hazard'] = { ...seismic, siteClass: 'F' } })),
+    ).toThrow(/hazard\.siteClass/)
+  })
+
+  it.each([
+    ['shaking past the slider', { ...seismic, Ss_g: 99 }],
+    ['negative shaking', { ...seismic, Ss_g: -1 }],
+    ['water deeper than the slider', { ...flood, depth_m: 500 }],
+    ['NaN flow velocity', { ...flood, velocity_ms: Number.NaN }],
+  ])('refuses %s', (_label, hazard) => {
+    expect(() => parse(corrupt((d) => { d['hazard'] = hazard }))).toThrow(DesignParseError)
+  })
+
+  it('drops fields the hazard does not have, rather than carrying them', () => {
+    const parsed = parse(
+      corrupt((d) => { d['hazard'] = { ...flood, gustSpeed_kmh: 250 } }),
+    )
+    expect('gustSpeed_kmh' in parsed.hazard).toBe(false)
   })
 })
 
@@ -231,6 +284,12 @@ describe('the property the module exists for', () => {
       (d) => { d.structure.foundation.embedmentDepth_m = 0 },
       (d) => { d.structure.exposureCategory = 'D' },
       (d) => { for (const s of d.structure.storeys) s.lateralSystem = 'none' },
+      // Every hazard kind, including the degenerate settings of each — a design
+      // the parser accepts has to run whichever event it carries.
+      (d) => { d.hazard = { kind: 'seismic', Ss_g: 1.5, S1_g: 0.6, siteClass: 'D', directionDeg: 0 } },
+      (d) => { d.hazard = { kind: 'seismic', Ss_g: 0, S1_g: 0, siteClass: 'A', directionDeg: 45 } },
+      (d) => { d.hazard = { kind: 'flood', depth_m: 3, velocity_ms: 2, directionDeg: 0 } },
+      (d) => { d.hazard = { kind: 'flood', depth_m: 0, velocity_ms: 0, directionDeg: 180 } },
     ]
     for (const mutate of variants) {
       const design = parse(corrupt(mutate))

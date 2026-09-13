@@ -43,6 +43,7 @@ import { useComparison } from '@/store/useComparison.ts'
 import { sharedDesignOutcome } from '@/store/sharedDesign.ts'
 import { useTutorialStore } from '@/store/useTutorial.ts'
 import { stepAt } from '@/lib/tutorial.ts'
+import { HAZARD_LABEL, HAZARD_PROVENANCE } from '@/lib/hazard.ts'
 
 /**
  * The panel's tabs, in the order a session actually goes: build the thing,
@@ -122,8 +123,12 @@ export default function App() {
         >
           Ballast
         </button>
+        {/* Names the clause family the analysis on screen actually came from,
+            which changes with the hazard — Chapter 5 is flood, 11-12 is
+            seismic, 26-27 is wind. */}
         <p className="font-pixel text-[0.7rem] tracking-widest text-ink/45">
-          WIND · ASCE 7 · EVERY NUMBER FROM THE ENGINE
+          {HAZARD_LABEL[hazard.kind].toUpperCase()} ·{' '}
+          {HAZARD_PROVENANCE[hazard.kind]} · EVERY NUMBER FROM THE ENGINE
         </p>
 
         {shared.loadedName !== null && (

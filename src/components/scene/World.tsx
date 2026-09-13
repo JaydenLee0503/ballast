@@ -13,7 +13,7 @@
  * input is `totalHeight_m` — a property of the structure the student typed in,
  * not a figure the engine derived — and all it drives is the time of day. The
  * things that *do* mean something (storey colour, arrow length) are still
- * `StoreyStack` and `WindArrows`, still straight off the engine, and are still
+ * `StoreyStack` and `HazardArrows`, still straight off the engine, and are still
  * the only saturated colours in the frame.
  *
  * Time of day is the one piece of feedback the world gives back: the taller

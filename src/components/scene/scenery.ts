@@ -13,7 +13,7 @@
  *    to an `AnalysisResult`, and nothing here feeds one. The neighbours are
  *    not designs and are not analysed; they are context. Everything that means
  *    something — storey colour, arrow length — still comes from the engine and
- *    still lives in `StoreyStack` and `WindArrows`.
+ *    still lives in `StoreyStack` and `HazardArrows`.
  * 2. **It never moves.** The layout is a module constant, generated from a
  *    fixed seed, so the same city appears on every load and does not shuffle
  *    when a slider does. A neighbourhood that rearranged itself as the student

@@ -33,14 +33,23 @@
  * See `lib/materialLook.ts`.
  */
 
-import { useEffect, useMemo, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import { Edges } from '@react-three/drei'
-import { BoxGeometry, BufferGeometry, CylinderGeometry, Float32BufferAttribute } from 'three'
+import {
+  BoxGeometry,
+  BufferGeometry,
+  CylinderGeometry,
+  Float32BufferAttribute,
+  Quaternion,
+  Vector3,
+  type Group,
+} from 'three'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import {
   FACADE,
   MATERIAL_LIBRARY,
   planPerimeter_m,
+  type DamageReport,
   type Storey,
   type StoreyResult,
   type Structure,
@@ -50,6 +59,13 @@ import { materialLook, wallColor } from '@/lib/materialLook.ts'
 import { roofForm } from '@/lib/typology.ts'
 import { gablePrism, monoPrism } from '@/lib/roofGeometry.ts'
 import { createWindowedMaterial } from './windows.ts'
+import { StoreyCracks } from './StoreyCracks.tsx'
+import {
+  cumulativeDrift_m,
+  storeyPose,
+  type SimulationMotion,
+  type StoreyPoseInput,
+} from './motion.ts'
 
 /** Vertical gap between boxes, so the edge lines read as separate storeys. */
 const STOREY_GAP_M = 0.08
@@ -103,6 +119,17 @@ interface StoreyBoxProps {
   hovered: boolean
   /** Eased 0..1 time of day, shared with the sky. Lights the panes. */
   night: RefObject<number>
+  /**
+   * Where the simulation is up to. A ref, not state: it changes every frame and
+   * a render per frame would walk the whole scene tree to move one box.
+   */
+  motion: RefObject<SimulationMotion>
+  /** Everything the pose needs that does not change frame to frame. */
+  pose: StoreyPoseInput
+  /** Unit vector of the load in the three.js plan frame. */
+  direction: readonly [number, number]
+  /** Whether this storey is drawn damaged at all. Cracks only. */
+  showDamage: boolean
   onSelect: (index: number | null) => void
   onHover: (index: number, clientX: number, clientY: number) => void
   onHoverEnd: (index: number) => void
@@ -115,10 +142,19 @@ function StoreyBox({
   selected,
   hovered,
   night,
+  motion,
+  pose,
+  direction,
+  showDamage,
   onSelect,
   onHover,
   onHoverEnd,
 }: StoreyBoxProps) {
+  const group = useRef<Group>(null)
+  // Allocated once. This runs every frame during an event, and a scene that
+  // allocates a Vector3 per storey per frame is a scene that stutters on GC.
+  const tiltAxis = useMemo(() => new Vector3(), [])
+  const tilt = useMemo(() => new Quaternion(), [])
   // One material per storey, because each carries its own band colour, its own
   // glazing ratio and its own size. Built once and mutated, rather than
   // rebuilt per render: a new material is a new shader program compile.
@@ -190,16 +226,37 @@ function StoreyBox({
   // ours to release, and a slider drag builds a new one every frame.
   useEffect(() => () => solid.dispose(), [solid])
 
-  // The one per-frame value: the panes come on as the sky goes down.
-  useFrame(() => windowed.setNight(night.current))
+  const restY = result.baseElevation_m + storey.height_m / 2
+
+  useFrame(() => {
+    // The panes come on as the sky goes down.
+    windowed.setNight(night.current)
+
+    const node = group.current
+    if (node === null) return
+    const { offset_m, drop_m, tilt_rad } = storeyPose(pose, motion.current)
+    node.position.set(
+      direction[0] * offset_m,
+      restY - drop_m,
+      direction[1] * offset_m,
+    )
+    // Tilt happens about the horizontal axis across the load, which is the
+    // load direction turned ninety degrees in plan.
+    if (tilt_rad === 0) {
+      node.quaternion.identity()
+    } else {
+      tiltAxis.set(-direction[1], 0, direction[0]).normalize()
+      node.quaternion.copy(tilt.setFromAxisAngle(tiltAxis, tilt_rad))
+    }
+  })
 
   return (
+    <group ref={group} position={[0, restY, 0]}>
     <mesh
       castShadow
       receiveShadow
       material={windowed.material}
       geometry={solid}
-      position={[0, result.baseElevation_m + storey.height_m / 2, 0]}
       onClick={(event: ThreeEvent<MouseEvent>) => {
         // Without this the click passes through to every storey behind.
         event.stopPropagation()
@@ -223,6 +280,18 @@ function StoreyBox({
           white on selection. */}
       <Edges color={selected ? '#ffffff' : hovered ? '#fff7ef' : '#2f2748'} />
     </mesh>
+    {/* Only while an event is being shown. The studio's editing view draws the
+        design as designed, so dismissing the simulation puts the student back
+        in front of an intact building to change. */}
+    {showDamage && (
+      <StoreyCracks
+        storey={storey}
+        height_m={boxHeight}
+        damage={result.damage}
+        index={index}
+      />
+    )}
+    </group>
   )
 }
 
@@ -233,6 +302,14 @@ export interface StoreyStackProps {
   onSelect: (index: number | null) => void
   hoveredStoreyIndex: number | null
   night: RefObject<number>
+  /** Where the simulation is up to. Resting when nothing is running. */
+  motion: RefObject<SimulationMotion>
+  /** Which storeys the engine says are damaged, and where the stack failed. */
+  damage: DamageReport
+  /** Whether to draw that damage at all. False in the ordinary studio view. */
+  showDamage: boolean
+  /** Bearing the hazard acts along, in degrees in the engine's plan frame. */
+  directionDeg: number
   /**
    * Called on entering a storey and on every move across it, with the pointer
    * in client coordinates. The caller decides what to do with the position;
@@ -256,9 +333,25 @@ export function StoreyStack({
   onSelect,
   hoveredStoreyIndex,
   night,
+  motion,
+  damage,
+  showDamage,
+  directionDeg,
   onHover,
   onHoverEnd,
 }: StoreyStackProps) {
+  // Absolute movement relative to the ground, which is what gets drawn;
+  // `drift_m` on its own is movement relative to the storey below.
+  const cumulative = useMemo(
+    () => cumulativeDrift_m(storeys.map((s) => s.drift_m)),
+    [storeys],
+  )
+  // Engine plan X -> three X, engine plan Y -> three Z. Same mapping as
+  // everywhere else in this folder.
+  const direction = useMemo<readonly [number, number]>(() => {
+    const radians = (directionDeg * Math.PI) / 180
+    return [Math.cos(radians), Math.sin(radians)]
+  }, [directionDeg])
   // Pair geometry with results by index. flatMap over a possibly-short results
   // array rather than indexing with `!`, so a mismatch renders less rather
   // than crashing.
@@ -278,6 +371,16 @@ export function StoreyStack({
           selected={selectedStoreyIndex === index}
           hovered={hoveredStoreyIndex === index}
           night={night}
+          motion={motion}
+          direction={direction}
+          showDamage={showDamage}
+          pose={{
+            index,
+            cumulativeDrift_m: cumulative[index] ?? 0,
+            width_m: Math.min(storey.widthX_m, storey.widthY_m),
+            collapseIndex: showDamage ? damage.collapseIndex : null,
+            height_m: storey.height_m,
+          }}
           onSelect={onSelect}
           onHover={onHover}
           onHoverEnd={onHoverEnd}
@@ -352,8 +455,36 @@ const DECK_THICKNESS_M = 0.16
  * `sustainability.ts` with a cited factor and its own tests — not a number
  * invented in a component.
  */
-export function RoofCap({ structure }: { structure: Structure }) {
+export interface RoofCapProps {
+  structure: Structure
+  /**
+   * The pose of the top storey, so the roof goes where the building goes. A
+   * parapet left hovering over a collapsed tower is the single most obviously
+   * wrong thing this scene could draw.
+   */
+  motion: RefObject<SimulationMotion>
+  pose: StoreyPoseInput
+  direction: readonly [number, number]
+}
+
+export function RoofCap({ structure, motion, pose, direction }: RoofCapProps) {
   const top = structure.storeys[structure.storeys.length - 1]
+  const group = useRef<Group>(null)
+  const tiltAxis = useMemo(() => new Vector3(), [])
+  const tilt = useMemo(() => new Quaternion(), [])
+
+  useFrame(() => {
+    const node = group.current
+    if (node === null) return
+    const { offset_m, drop_m, tilt_rad } = storeyPose(pose, motion.current)
+    node.position.set(direction[0] * offset_m, -drop_m, direction[1] * offset_m)
+    if (tilt_rad === 0) {
+      node.quaternion.identity()
+    } else {
+      tiltAxis.set(-direction[1], 0, direction[0]).normalize()
+      node.quaternion.copy(tilt.setFromAxisAngle(tiltAxis, tilt_rad))
+    }
+  })
   // A gable, a shed and a parapet are all rectangular objects, and there is no
   // honest round version of them here: a hipped drum roof is a shape the engine
   // has nothing to say about, and inventing one would be the viewport claiming
@@ -404,16 +535,18 @@ export function RoofCap({ structure }: { structure: Structure }) {
 
   if (prism !== null && geometry !== null) {
     return (
-      <mesh
-        castShadow
-        receiveShadow
-        geometry={geometry}
-        position={[0, wallTop_m, 0]}
-        rotation={[0, prism.rotationY, 0]}
-      >
-        <meshStandardMaterial color={ROOF_HEX} roughness={0.9} flatShading />
-        <Edges color="#2f2748" />
-      </mesh>
+      <group ref={group}>
+        <mesh
+          castShadow
+          receiveShadow
+          geometry={geometry}
+          position={[0, wallTop_m, 0]}
+          rotation={[0, prism.rotationY, 0]}
+        >
+          <meshStandardMaterial color={ROOF_HEX} roughness={0.9} flatShading />
+          <Edges color="#2f2748" />
+        </mesh>
+      </group>
     )
   }
 
@@ -443,7 +576,7 @@ export function RoofCap({ structure }: { structure: Structure }) {
   ]
 
   return (
-    <group>
+    <group ref={group}>
       <mesh
         receiveShadow
         position={[0, wallTop_m + DECK_THICKNESS_M / 2, 0]}

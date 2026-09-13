@@ -201,7 +201,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
         <section className="grid items-center gap-8 pt-6 pb-16 md:grid-cols-[1.1fr_1fr] md:pt-12">
           <div>
             <p className="font-pixel text-sm tracking-widest text-bloom">
-              STACK → STORM → REBUILD
+              STACK → DISASTER → REBUILD
             </p>
             <h1 className="mt-3 font-display text-4xl leading-[1.08] text-ink md:text-6xl">
               Build a tower.
@@ -210,8 +210,9 @@ export function Landing({ onOpenStudio }: LandingProps) {
             </h1>
             <p className="mt-5 max-w-lg text-base leading-relaxed text-ink/75">
               Ballast is a workshop for things that have to stay standing. Stack
-              up floors, turn the wind all the way up, and watch which parts
-              start to wobble. Then make it tougher — without costing the earth.
+              up floors, then throw a storm, an earthquake or a flood at it and
+              watch the whole thing happen. Then make it tougher — without
+              costing the earth.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <button
@@ -234,7 +235,44 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </div>
         </section>
 
-        <section className="rounded-3xl border-[3px] border-ink bg-bloom/15 px-6 py-10 md:px-10">
+        {/* Three hazards, named by what they do rather than by the clause they
+            come from. The consequence is the lesson; the citations are in the
+            studio, beside the numbers they produced. */}
+        <section className="rounded-3xl border-[3px] border-ink bg-white px-6 py-10 shadow-[6px_6px_0_0_var(--color-ink)] md:px-10">
+          <PixelRule />
+          <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
+            Pick your disaster
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink/75">
+            Storm, earthquake or flood — and they are not the same problem
+            wearing different hats. A tall light tower shrugs off a flood and is
+            the easiest thing in the world for an earthquake to throw around.
+            Build one building, run it against all three, and the tradeoffs stop
+            being abstract.
+          </p>
+          <div className="mt-8 grid gap-5 sm:grid-cols-3">
+            <Card tone="bg-mint" title="Storm" tilt="-rotate-1">
+              Pushes hardest at the top, where the air moves fastest. Be narrow,
+              be stiff, and do not present a wide flat face to it.
+            </Card>
+            <Card tone="bg-blossom" title="Earthquake" tilt="rotate-1">
+              Shakes the ground, and your building has to drag its own weight
+              along. Heavy is suddenly the problem, not the answer.
+            </Card>
+            <Card tone="bg-lilac" title="Flood" tilt="-rotate-1">
+              Leans on the bottom few metres and tries to float the rest. Light
+              buildings are the ones that lift off their foundations.
+            </Card>
+          </div>
+          <p className="mt-6 text-sm leading-relaxed text-ink/70">
+            Then press <span className="font-display text-ink">Start a
+            simulation</span> and watch it arrive: the building leans, shakes or
+            goes under, floors crack, and anything past its limit comes down.
+            Afterwards you are back at the controls with the damage explained.
+          </p>
+        </section>
+
+        <section className="mt-16 rounded-3xl border-[3px] border-ink bg-bloom/15 px-6 py-10 md:px-10">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             Three things to juggle
@@ -248,7 +286,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </p>
           <div className="mt-8 grid gap-5 sm:grid-cols-3">
             <Card tone="bg-mint" title="Will it stand up?" tilt="-rotate-1">
-              How much stronger your tower is than the storm you picked. Dip
+              How much stronger your tower is than the disaster you picked. Dip
               under 1.5 and it is in real trouble.
             </Card>
             <Card tone="bg-lilac" title="What did the planet pay?" tilt="rotate-1">
@@ -272,13 +310,14 @@ export function Landing({ onOpenStudio }: LandingProps) {
               Pick how tall and how wide, then choose what it is made of —
               timber, steel, concrete, bamboo, even rammed earth.
             </Step>
-            <Step n="02" title="Turn up the storm">
-              Set the wind speed and where you are: open field, city street, or
-              right on the coast. Every floor gets pushed.
+            <Step n="02" title="Choose a disaster">
+              A storm, an earthquake or a flood — then how bad, and which way it
+              comes from. Each one loads your building somewhere different.
             </Step>
-            <Step n="03" title="Find the wobbly bits">
-              Floors glow amber, then red, when they are working too hard —
-              usually the ones near the ground, holding everything above them.
+            <Step n="03" title="Watch it happen">
+              Run the simulation. Floors glow amber, then red, then crack when
+              they are past their limit — and you find out what you have to
+              change.
             </Step>
           </div>
         </section>
@@ -294,8 +333,10 @@ export function Landing({ onOpenStudio }: LandingProps) {
                 Every number in Ballast comes out of the same equations a
                 structural engineer would use — wind pressure, how far each
                 floor sways, whether the whole thing tips over. Nothing is
-                guessed and nothing is random. Slide the wind back down and you
-                get the number you had before.
+                guessed and nothing is random. Slide the storm back down and you
+                get the number you had before. The animation is allowed to
+                exaggerate how far things move, and says so while it does; it is
+                never allowed to decide what breaks.
               </p>
               <p>
                 There is an AI helper that explains what is going wrong and
@@ -307,7 +348,10 @@ export function Landing({ onOpenStudio }: LandingProps) {
             </div>
             <ul className="space-y-2.5">
               {[
-                ['Real equations', 'ASCE 7 wind loads, cited clause by clause'],
+                [
+                  'Real equations',
+                  'ASCE 7 wind, seismic and flood loads, cited clause by clause',
+                ],
                 ['Same every time', 'No dice rolls anywhere in the maths'],
                 ['The AI cannot fib', 'Its answers are audited figure by figure'],
                 ['Works offline', 'The simulation needs no internet at all'],
@@ -336,12 +380,14 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </p>
           <ul className="mt-6 grid gap-3 sm:grid-cols-2">
             {[
-              'Wind only for now. Earthquakes and floods are next.',
-              'The wind blows from one direction at a time.',
+              'Everything hits from one direction at a time.',
               'Towers past about fifteen floors get less accurate.',
               'Carbon counts the frame, not the whole finished building.',
               'Prices are ballpark figures, not real quotes.',
               'The ground is flat — no hills to speed the wind up.',
+              'Floods here are rivers, not coastal surges: no breaking waves.',
+              'Earthquakes shake sideways only, and only one way at a time.',
+              'Wildfire is not in here at all. It is the next one.',
             ].map((limit) => (
               <li
                 key={limit}

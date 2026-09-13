@@ -5,8 +5,25 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { analyze, MATERIAL_LIBRARY, type FloodHazard, type SeismicHazard } from '@/engine'
 import { bucketForKey, collectByBucket, findUntraceableFigures } from './guard.ts'
-import { demoContext, says } from './fixtures.test-support.ts'
+import { buildCritiqueContext } from './context.ts'
+import { DEMO_STRUCTURE, demoContext, says } from './fixtures.test-support.ts'
+
+const SEISMIC_HAZARD: SeismicHazard = {
+  kind: 'seismic',
+  Ss_g: 1.5,
+  S1_g: 0.6,
+  siteClass: 'D',
+  directionDeg: 0,
+}
+
+const FLOOD_HAZARD: FloodHazard = {
+  kind: 'flood',
+  depth_m: 2,
+  velocity_ms: 1.5,
+  directionDeg: 0,
+}
 
 const context = demoContext()
 const flags = (text: string) => findUntraceableFigures(says(text), context)
@@ -154,5 +171,82 @@ describe('prose that is not a claim about the physics', () => {
       context,
     )
     expect(found).toHaveLength(1)
+  })
+})
+
+/**
+ * The two dimensions the other hazards brought with them.
+ *
+ * A ground acceleration and a flow velocity are exactly the kind of figure a
+ * model reaches for when asked why an earthquake or a flood governs, and
+ * neither existed as a bucket while wind was the only hazard — so an invented
+ * "0.9 g" would have sailed through in the `count` bucket that nothing checks.
+ */
+describe('accelerations and flow velocities', () => {
+  const seismicContext = buildCritiqueContext(
+    analyze(DEMO_STRUCTURE, SEISMIC_HAZARD, MATERIAL_LIBRARY),
+    DEMO_STRUCTURE,
+    SEISMIC_HAZARD,
+    MATERIAL_LIBRARY,
+  )
+  const floodContext = buildCritiqueContext(
+    analyze(DEMO_STRUCTURE, FLOOD_HAZARD, MATERIAL_LIBRARY),
+    DEMO_STRUCTURE,
+    FLOOD_HAZARD,
+    MATERIAL_LIBRARY,
+  )
+
+  it('files a ground acceleration under its own dimension', () => {
+    expect(bucketForKey('Ss_g')).toBe('acceleration')
+    expect(bucketForKey('SDS_g')).toBe('acceleration')
+  })
+
+  it('keeps a flow velocity apart from a gust speed', () => {
+    // Both are velocities and they are written in different units, so pooling
+    // them would let "1.5 m/s" be excused by a 1.5 that means km/h.
+    expect(bucketForKey('velocity_ms')).toBe('flowSpeed')
+    expect(bucketForKey('gustSpeed_kmh')).toBe('speed')
+  })
+
+  it('accepts the mapped acceleration it was actually given', () => {
+    expect(
+      findUntraceableFigures(says('The ground moves at 1.5 g.'), seismicContext),
+    ).toEqual([])
+  })
+
+  it('flags an acceleration nobody handed it', () => {
+    const flagged = findUntraceableFigures(
+      says('The site sees about 3.8 g of shaking.'),
+      seismicContext,
+    )
+    expect(flagged.map((figure) => figure.value)).toContain(3.8)
+  })
+
+  it('accepts the flow velocity it was given', () => {
+    expect(
+      findUntraceableFigures(says('The water moves at 1.5 m/s.'), floodContext),
+    ).toEqual([])
+  })
+
+  it('flags an invented flow velocity', () => {
+    const flagged = findUntraceableFigures(
+      says('At 7.2 m/s the current would carry debris.'),
+      floodContext,
+    )
+    expect(flagged.map((figure) => figure.value)).toContain(7.2)
+  })
+
+  it('does not read "storeys" or "grams" as a unit', () => {
+    // The lookahead after the unit is what stops this, and it is the kind of
+    // thing a regex change breaks silently.
+    expect(findUntraceableFigures(says('All 6 storeys are fine.'), floodContext))
+      .toEqual([])
+  })
+
+  it('still refuses to let a length excuse an acceleration', () => {
+    // The flood is 2.0 m deep, which is in the context as a length. A model
+    // claiming "2.0 g" must not be excused by it.
+    const flagged = findUntraceableFigures(says('Shaking of 2.0 g.'), floodContext)
+    expect(flagged.map((figure) => figure.value)).toContain(2)
   })
 })

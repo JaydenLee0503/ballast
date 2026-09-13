@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MATERIAL_LIBRARY, type AnalysisResult, type Structure, type WindHazard } from '@/engine'
+import { MATERIAL_LIBRARY, type AnalysisResult, type Structure, type Hazard } from '@/engine'
 import { buildCritiqueContext } from '@/ai/context.ts'
 import { requestCritique } from '@/ai/client.ts'
 import type { Critique, UntraceableFigure } from '@/ai/types.ts'
@@ -25,13 +25,13 @@ type Status = 'idle' | 'loading' | 'done' | 'error'
 export interface CritiquePanelProps {
   result: AnalysisResult
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 /** What the design looked like when the critique was asked for. */
 interface RequestedFor {
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 export function CritiquePanel({ result, structure, hazard }: CritiquePanelProps) {

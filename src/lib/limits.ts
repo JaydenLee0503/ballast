@@ -34,6 +34,35 @@ export const STOREY_COUNT_LIMITS: Limits = { min: 1, max: 24 }
 export const TAPER_LIMITS: Limits = { min: 0, max: 0.6 }
 export const PLAN_WIDTH_LIMITS_M: Limits = { min: 4, max: 60 }
 export const GUST_SPEED_LIMITS_KMH: Limits = { min: 0, max: 300 }
+
+/**
+ * Mapped MCE_R spectral accelerations, in g.
+ *
+ * The upper ends are roughly the worst the ASCE 7-16 maps show anywhere in the
+ * contiguous United States: about 2.5 g at short period and 1.2 g at one
+ * second, near the San Andreas and in the New Madrid zone. A student who pushes
+ * the slider to the end is standing on the worst ground the standard maps, not
+ * on an invented one.
+ *
+ * Zero is included for the same reason a 0 km/h gust is: "what does this
+ * building do with no hazard on it at all" is a question worth being able to
+ * ask, and the engine answers it without dividing by anything.
+ */
+export const SEISMIC_SS_LIMITS_G: Limits = { min: 0, max: 2.5 }
+export const SEISMIC_S1_LIMITS_G: Limits = { min: 0, max: 1.2 }
+
+/**
+ * Flood depth and flow velocity.
+ *
+ * 12 m is deeper than almost any riverine flood on record and taller than most
+ * of what this app builds, which is deliberate: the interesting part of the
+ * slider is the first three metres, and the far end is there so a student can
+ * see what total submersion does. 6 m/s is a fast river in flood; past about
+ * 3 m/s the engine warns that debris impact — which it does not model — starts
+ * to dominate.
+ */
+export const FLOOD_DEPTH_LIMITS_M: Limits = { min: 0, max: 12 }
+export const FLOW_VELOCITY_LIMITS_MS: Limits = { min: 0, max: 6 }
 export const ANCHOR_CAPACITY_LIMITS_KN: Limits = { min: 0, max: 5000 }
 
 /**

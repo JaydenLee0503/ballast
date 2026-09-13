@@ -86,7 +86,7 @@ export function BlueprintPanel() {
   const loading = status === 'loading'
 
   return (
-    <section className="sticker space-y-3 p-3">
+    <section data-tour="describe" className="sticker space-y-3 p-3">
       <div>
         <h3 className="font-pixel text-[0.7rem] uppercase tracking-widest text-ink/45">
           Describe a building

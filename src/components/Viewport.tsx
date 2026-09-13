@@ -2,7 +2,7 @@
  * The 3D view: the design, standing on a plot, in a city.
  *
  * Two layers, and the line between them is the point. The **design** —
- * `StoreyStack` and `WindArrows` — renders `AnalysisResult` and nothing more:
+ * `StoreyStack` and `HazardArrows` — renders `AnalysisResult` and nothing more:
  * every colour and every arrow length traces to a field the engine produced,
  * and those are the only saturated colours in the frame. The **world** —
  * `scene/World.tsx` — is scenery: streets, trees, traffic, neighbours and a
@@ -31,15 +31,21 @@ import {
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { Vector2, Vector3 } from 'three'
-import type { AnalysisResult, Structure, WindHazard } from '@/engine'
+import type { AnalysisResult, Structure, Hazard } from '@/engine'
 import { rotateAboutPivot } from '@/lib/orbit.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
 import { StoreyTooltip } from './StoreyTooltip.tsx'
+import { SimulationOverlay } from './SimulationOverlay.tsx'
 import { FoundationBlock, RoofCap, StoreyStack } from './scene/StoreyStack.tsx'
-import { WindArrows } from './scene/WindArrows.tsx'
+import { FloodWater } from './scene/FloodWater.tsx'
+import { HazardArrows } from './scene/HazardArrows.tsx'
+import { cumulativeDrift_m } from './scene/motion.ts'
+import { useSimulationMotion } from './scene/useSimulationMotion.ts'
 import { useNightProgress } from './scene/useNightProgress.ts'
 import { World } from './scene/World.tsx'
 import { useDesignStore } from '@/store/design.ts'
+import { HAZARD_HEX, HAZARD_LABEL } from '@/lib/hazard.ts'
+import { useSimulationStore } from '@/store/useSimulation.ts'
 
 /**
  * Narrower than a typical 3D viewport. A long lens flattens perspective, which
@@ -285,7 +291,7 @@ function Scene({
 }: {
   result: AnalysisResult
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
   frameNonce: number
   hoveredStoreyIndex: number | null
   onHoverStorey: (index: number, clientX: number, clientY: number) => void
@@ -295,6 +301,27 @@ function Scene({
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
   const selectStorey = useDesignStore((state) => state.selectStorey)
   const dimensions = measure(structure)
+  // Where the event is up to. A ref the scene reads per frame; the phase it is
+  // derived from is state, and it changes three times per run.
+  const motion = useSimulationMotion(hazard.kind)
+  const phase = useSimulationStore((state) => state.phase)
+  // Damage is drawn only while an event is being shown. Dismissing the
+  // simulation puts the student back in front of an intact building to edit,
+  // which is the point of dismissing it.
+  const showDamage = phase === 'impact' || phase === 'aftermath'
+  // Engine plan X -> three X, plan Y -> three Z, as everywhere in this folder.
+  const loadDirection = (hazard.directionDeg * Math.PI) / 180
+  const topPose = {
+    index: result.storeys.length - 1,
+    cumulativeDrift_m:
+      cumulativeDrift_m(result.storeys.map((s) => s.drift_m)).at(-1) ?? 0,
+    width_m: Math.min(
+      structure.storeys.at(-1)?.widthX_m ?? 1,
+      structure.storeys.at(-1)?.widthY_m ?? 1,
+    ),
+    collapseIndex: showDamage ? result.damage.collapseIndex : null,
+    height_m: structure.storeys.at(-1)?.height_m ?? 3,
+  }
   // Stable, because the scenery below it is memoised on this prop: a fresh
   // closure every render would rebuild several hundred instanced objects on
   // every slider tick.
@@ -315,15 +342,30 @@ function Scene({
         onSelect={selectStorey}
         hoveredStoreyIndex={hoveredStoreyIndex}
         night={night}
+        motion={motion}
+        damage={result.damage}
+        showDamage={showDamage}
+        directionDeg={hazard.directionDeg}
         onHover={onHoverStorey}
         onHoverEnd={onHoverStoreyEnd}
       />
-      <RoofCap structure={structure} />
-      <WindArrows
+      <RoofCap
+        structure={structure}
+        motion={motion}
+        pose={topPose}
+        direction={[Math.cos(loadDirection), Math.sin(loadDirection)]}
+      />
+      <HazardArrows
         storeys={result.storeys}
         hazard={hazard}
         footprintRadius_m={dimensions.footprintRadius_m}
       />
+      {/* Scenery, not analysis: how deep the water is, which is something the
+          student typed. What the water is doing to the building is the arrows
+          and the storey colours. */}
+      {hazard.kind === 'flood' && (
+        <FloodWater depth_m={hazard.depth_m} motion={motion} />
+      )}
 
       <CameraRig
         trigger={frameNonce}
@@ -356,7 +398,7 @@ const LEGEND_BANDS: readonly UtilizationBand[] = ['safe', 'caution', 'fail']
 export interface ViewportProps {
   result: AnalysisResult
   structure: Structure
-  hazard: WindHazard
+  hazard: Hazard
 }
 
 /** Gap between the pointer and the hover card, in CSS pixels. */
@@ -366,6 +408,20 @@ const TOOLTIP_REACH_PX = 240
 
 export function Viewport({ result, structure, hazard }: ViewportProps) {
   const [frameNonce, setFrameNonce] = useState(0)
+  const simulationPhase = useSimulationStore((state) => state.phase)
+  const startSimulation = useSimulationStore((state) => state.start)
+  const dismissSimulation = useSimulationStore((state) => state.dismiss)
+  const running = simulationPhase !== 'idle'
+
+  // Editing the design or changing the hazard ends the run. The aftermath on
+  // screen belongs to a particular building meeting a particular event, and
+  // leaving a collapsed tower standing over a design the student has since
+  // changed would make the picture a lie about the numbers beside it.
+  useEffect(() => {
+    dismissSimulation()
+    // Deliberately keyed on identity: every store action replaces the object it
+    // touches, so "same object" and "unchanged" are the same question.
+  }, [structure, hazard, dismissSimulation])
 
   // Which storey the pointer is over. State, because it changes the card's
   // contents and the storey's own highlight.
@@ -470,23 +526,41 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
             </li>
           ))}
         </ul>
-        <button
-          type="button"
-          onClick={() => setFrameNonce((nonce) => nonce + 1)}
-          className="pointer-events-auto rounded-full border-2 border-ink bg-white px-3 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
-        >
-          Frame view
-        </button>
+        <div className="pointer-events-auto flex items-center gap-2" data-tour="simulate">
+          {/* The headline action of the whole studio, so it wears the hazard's
+              own colour rather than the chrome's white. */}
+          <button
+            type="button"
+            onClick={() => startSimulation(hazard.kind)}
+            disabled={running}
+            title={`Run the ${HAZARD_LABEL[hazard.kind].toLowerCase()} against this design`}
+            className="rounded-full border-2 border-ink px-3.5 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-45"
+            style={{ backgroundColor: HAZARD_HEX[hazard.kind] }}
+          >
+            ▶ Start a simulation
+          </button>
+          <button
+            type="button"
+            onClick={() => setFrameNonce((nonce) => nonce + 1)}
+            className="rounded-full border-2 border-ink bg-white px-3 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+          >
+            Frame view
+          </button>
+        </div>
       </div>
+
+      <SimulationOverlay result={result} hazard={hazard} />
 
       {/* On a chip, not bare text: the sky behind it runs from midday blue to
           midnight, and no single text colour is legible against both. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
-        <p className="rounded-full border-2 border-ink/70 bg-paper/90 px-3.5 py-1.5 text-center text-[0.7rem] text-ink/70">
-          Drag to orbit &middot; scroll to zoom at the cursor &middot;
-          double-click to re-centre &middot; click a storey to edit it
-        </p>
-      </div>
+      {!running && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
+          <p className="rounded-full border-2 border-ink/70 bg-paper/90 px-3.5 py-1.5 text-center text-[0.7rem] text-ink/70">
+            Drag to orbit &middot; scroll to zoom at the cursor &middot;
+            double-click to re-centre &middot; click a storey to edit it
+          </p>
+        </div>
+      )}
     </div>
   )
 }

@@ -15,8 +15,8 @@
  * pointing at a control that was renamed is the classic way these rot.
  *
  * The tour teaches the *loop*, not the interface: choose a building, change it,
- * blow wind at it, read what that cost. A student who finishes it should know
- * why the numbers move, not where every button is.
+ * throw a disaster at it, read what that cost. A student who finishes it should
+ * know why the numbers move, not where every button is.
  */
 
 /** Bo's expressions. Each is a small change of face and tilt, nothing more. */
@@ -68,10 +68,21 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
     mood: 'wave',
   },
   {
+    id: 'describe',
+    tab: 'basics',
+    anchor: 'describe',
+    title: 'Just say what you want',
+    body:
+      'Type "an arena" or "a timber library" and the controls get set for you. ' +
+      'It only picks a starting point — the engine still works out whether it ' +
+      'stands up, and it tells you what it had to change and what it cannot model.',
+    mood: 'point',
+  },
+  {
     id: 'typology',
     tab: 'basics',
     anchor: 'typology',
-    title: 'Pick something to build',
+    title: 'Or pick something to build',
     body:
       'A house, a school, a tower — each one starts you somewhere different. ' +
       'They are all just floors stacked up, so every control still works ' +
@@ -92,11 +103,25 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
     id: 'wind',
     tab: 'basics',
     anchor: 'wind',
-    title: 'Now blow a storm at it',
+    title: 'Now pick a disaster',
     body:
-      'This is the gust speed. Push it up and the wind pushes harder on every ' +
-      'floor. This is the moment the design either holds or does not.',
+      'A storm, an earthquake or a flood. They are not the same problem: wind ' +
+      'pushes hardest at the top, an earthquake shakes your building by its own ' +
+      'weight, and a flood leans on the bottom and tries to float it. Try the ' +
+      'same building against all three.',
     mood: 'think',
+  },
+  {
+    id: 'simulate',
+    tab: null,
+    anchor: 'simulate',
+    title: 'Then watch it happen',
+    body:
+      'Press this and the disaster actually arrives. The building leans, shakes ' +
+      'or goes under, and anything the engine says is over its limit cracks — ' +
+      'or falls down. The movement is drawn much bigger than life so you can ' +
+      'see it; the numbers are not.',
+    mood: 'cheer',
   },
   {
     id: 'storeys',
@@ -138,8 +163,8 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
     title: 'Go build something',
     body:
       'Try to get a tall one through a 200 km/h gust without going red — then ' +
-      'try to do it with less carbon. You can bring me back any time from the ' +
-      'button in the top bar.',
+      'see what the same building does in an earthquake. You can bring me back ' +
+      'any time from the button in the top bar.',
     mood: 'cheer',
   },
 ]

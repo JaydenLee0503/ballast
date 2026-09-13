@@ -48,6 +48,16 @@ type Bucket =
   | 'moneyIntensity'
   | 'moneyDensity'
   | 'speed'
+  /**
+   * Kept apart from `speed` on purpose. A gust is quoted in km/h and a flood
+   * current in m/s, and pooling them would let "1.5 m/s" be excused by a
+   * 1.5 km/h that is not in the context either — worse, by an unrelated figure
+   * that happens to share the number. Two ways of writing a velocity that never
+   * appear in the same sentence are two buckets.
+   */
+  | 'flowSpeed'
+  | 'acceleration'
+  | 'time'
   | 'stress'
   | 'density'
   | 'carbonIntensity'
@@ -77,11 +87,17 @@ export function bucketForKey(key: string): Bucket {
     ['_kNm', 'moment'],
     ['_kN', 'force'],
     ['_kmh', 'speed'],
+    ['_ms', 'flowSpeed'],
     ['_MPa', 'stress'],
     ['_GPa', 'stress'],
     ['_m2', 'area'],
     ['_m3', 'volume'],
     ['_m', 'length'],
+    // Ground acceleration as a fraction of gravity (Ss, S1, SDS, SD1), and the
+    // fundamental period. Both are figures a model will happily invent when
+    // asked why an earthquake governs.
+    ['_g', 'acceleration'],
+    ['_s', 'time'],
   ]
   for (const [suffix, bucket] of suffixes) {
     if (key.endsWith(suffix)) return bucket
@@ -137,11 +153,12 @@ interface Detected {
 }
 
 /**
- * Longest alternatives first so "kNm" is not read as "kN". The trailing
- * lookahead stops "5 m" matching inside "5 metres" and "1 t" inside "1 time".
+ * Longest alternatives first so "kNm" is not read as "kN", "m/s" is not read as
+ * "m", and "kg" is not read as "g". The trailing lookahead stops "5 m" matching
+ * inside "5 metres", "1 t" inside "1 time" and "2 s" inside "2 storeys".
  */
 const UNIT_PATTERN =
-  /(\d[\d,]*(?:\.\d+)?)\s*(kN·m|kN-m|kN\.m|kNm|kN|kgCO2e\/m2|kgCO2e\/m3|kgCO2e|kg\/m3|kg|USD\/m2|USD\/m3|USD|MPa|GPa|km\/h|tonnes|tonne|m2|m3|m²|m³|%|t|m)(?![a-zA-Z0-9])/g
+  /(\d[\d,]*(?:\.\d+)?)\s*(kN·m|kN-m|kN\.m|kNm|kN|kgCO2e\/m2|kgCO2e\/m3|kgCO2e|kg\/m3|kg|USD\/m2|USD\/m3|USD|MPa|GPa|km\/h|m\/s|tonnes|tonne|m2|m3|m²|m³|%|t|m|g|s)(?![a-zA-Z0-9])/g
 
 /** Captures the "/m²" that turns a cost into a cost intensity. */
 const CURRENCY_PATTERN =
@@ -170,6 +187,7 @@ const UNIT_BUCKETS: Readonly<Record<string, readonly [Bucket, number]>> = {
   MPa: ['stress', 1],
   GPa: ['stress', 1],
   'km/h': ['speed', 1],
+  'm/s': ['flowSpeed', 1],
   tonnes: ['mass', 1000],
   tonne: ['mass', 1000],
   t: ['mass', 1000],
@@ -178,6 +196,8 @@ const UNIT_BUCKETS: Readonly<Record<string, readonly [Bucket, number]>> = {
   m3: ['volume', 1],
   'm³': ['volume', 1],
   m: ['length', 1],
+  g: ['acceleration', 1],
+  s: ['time', 1],
   '%': ['ratio', 0.01],
 }
 

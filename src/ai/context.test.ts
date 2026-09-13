@@ -95,3 +95,68 @@ describe('degenerate inputs', () => {
     expect(uncheckable.length).toBe(1 + context.storeys.length + 1)
   })
 })
+
+/**
+ * The other two hazards. The rule the context has to keep is the one
+ * `StoreyResult` keeps: a field is present when the hazard has such a quantity
+ * and absent when it does not. "Gust speed: 0 km/h" under an earthquake would
+ * be a figure about something that does not exist — and, worse, one the guard
+ * would then let the model quote.
+ */
+describe('hazards other than wind', () => {
+  const SEISMIC = {
+    kind: 'seismic' as const,
+    Ss_g: 1.5,
+    S1_g: 0.6,
+    siteClass: 'D' as const,
+    directionDeg: 0,
+  }
+  const FLOOD = {
+    kind: 'flood' as const,
+    depth_m: 2,
+    velocity_ms: 1.5,
+    directionDeg: 0,
+  }
+  const build = (hazard: typeof SEISMIC | typeof FLOOD) =>
+    buildCritiqueContext(
+      analyze(DEMO_STRUCTURE, hazard, MATERIAL_LIBRARY),
+      DEMO_STRUCTURE,
+      hazard,
+      MATERIAL_LIBRARY,
+    )
+
+  it('describes an earthquake with the figures an earthquake has', () => {
+    const seismic = build(SEISMIC)
+    expect(seismic.hazard.kind).toBe('seismic')
+    expect(seismic.hazard.Ss_g).toBe(1.5)
+    expect(seismic.hazard.siteClass).toBe('D')
+    expect(seismic.hazard.gustSpeed_kmh).toBeUndefined()
+  })
+
+  it('quotes the design spectrum the engine actually used', () => {
+    // Fa = 1.0 and Fv = 1.7 at Site Class D, two thirds of each.
+    const seismic = build(SEISMIC)
+    expect(seismic.hazard.SDS_g).toBeCloseTo(1.0, 2)
+    expect(seismic.hazard.SD1_g).toBeCloseTo(0.68, 2)
+  })
+
+  it('reports the drift limit the analysis used, not the wind constant', () => {
+    // ASCE 7-16 Table 12.12-1 allows 0.020h under the design earthquake.
+    expect(build(SEISMIC).limits.driftLimitDenominator).toBe(50)
+    expect(build(FLOOD).limits.driftLimitDenominator).toBe(500)
+  })
+
+  it('describes a flood with the figures a flood has', () => {
+    const flood = build(FLOOD)
+    expect(flood.hazard.depth_m).toBe(2)
+    expect(flood.hazard.velocity_ms).toBe(1.5)
+    expect(flood.hazard.Ss_g).toBeUndefined()
+    expect(flood.hazard.exposureCategory).toBeUndefined()
+  })
+
+  it('carries the flotation check only where there is one', () => {
+    expect(build(FLOOD).stability.factorOfSafetyFlotation).toBeDefined()
+    expect(build(SEISMIC).stability.factorOfSafetyFlotation).toBeUndefined()
+    expect(context.stability.factorOfSafetyFlotation).toBeUndefined()
+  })
+})
