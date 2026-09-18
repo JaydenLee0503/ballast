@@ -117,6 +117,95 @@ function buildMessages(context) {
 	}];
 }
 const REQUEST_TIMEOUT_MS = 9e4;
+/**
+* Split a body into the JSON values it actually contains.
+*
+* WHY THIS IS NOT `JSON.parse`. Featherless intermittently answers an
+* OpenAI-compatible completion request with HTTP 200 and *two* concatenated
+* objects: a stub `chat.completion` with zero tokens, immediately followed by
+* `{"error":{"message":"No successful response received from completion
+* service","type":"server_error","code":"no_response"}}`. A single parse throws
+* "Unexpected non-whitespace character after JSON at position 1691", which
+* tells whoever is reading it nothing at all, and buries the one sentence that
+* explains what went wrong.
+*
+* So the body is scanned for balanced top-level values rather than assumed to
+* be one. Strings and escapes are tracked, because a brace inside a quoted
+* string is not a nesting level — and the model's own reply is a JSON string
+* full of braces.
+*/
+function splitJsonValues(text) {
+	const values = [];
+	let depth = 0;
+	let start = -1;
+	let inString = false;
+	let escaped = false;
+	for (let i = 0; i < text.length; i += 1) {
+		const char = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === "\"") inString = false;
+			continue;
+		}
+		if (char === "\"") {
+			inString = true;
+			continue;
+		}
+		if (char === "{" || char === "[") {
+			if (depth === 0) start = i;
+			depth += 1;
+			continue;
+		}
+		if (char === "}" || char === "]") {
+			depth -= 1;
+			if (depth === 0 && start >= 0) {
+				try {
+					values.push(JSON.parse(text.slice(start, i + 1)));
+				} catch {}
+				start = -1;
+			}
+		}
+	}
+	return values;
+}
+/** `{ error: { message } }`, the shape both OpenAI and Featherless use. */
+function errorMessage(value) {
+	if (typeof value !== "object" || value === null) return null;
+	const error = value.error;
+	if (typeof error === "string") return error;
+	if (typeof error !== "object" || error === null) return null;
+	const message = error.message;
+	return typeof message === "string" ? message : null;
+}
+/**
+* The payload a body carries, or the reason it carries none.
+*
+* An error object anywhere in the body wins over a completion that arrived
+* beside it, because that is exactly the case above: the stub completion is
+* empty and the error is the only true thing in the response.
+*/
+function readBody(text) {
+	const values = splitJsonValues(text);
+	for (const value of values) {
+		const message = errorMessage(value);
+		if (message !== null) return {
+			ok: false,
+			detail: message,
+			transient: /server_error|no_response|timeout|overload/i.test(text)
+		};
+	}
+	const first = values[0];
+	if (first === void 0) return {
+		ok: false,
+		detail: `the body held no JSON value: ${text.slice(0, 200)}`,
+		transient: false
+	};
+	return {
+		ok: true,
+		payload: first
+	};
+}
 function extractContent(payload) {
 	const choices = payload.choices;
 	if (!Array.isArray(choices) || choices.length === 0) return null;
@@ -135,9 +224,9 @@ function missingConfig(options) {
 	if (!options.model) return "FEATHERLESS_MODEL is not set. Add the exact model id from the Featherless catalogue to .env and restart the dev server, or to your host's environment variables and redeploy.";
 	return null;
 }
-async function callProvider(call) {
+/** One attempt. `transient` says whether trying again is worth anything. */
+async function attempt(call, baseUrl) {
 	const { options } = call;
-	const baseUrl = (options.baseUrl ?? "https://api.featherless.ai/v1").replace(/\/+$/, "");
 	try {
 		const upstream = await fetch(`${baseUrl}/chat/completions`, {
 			method: "POST",
@@ -153,19 +242,29 @@ async function callProvider(call) {
 			}),
 			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
 		});
+		const text = await upstream.text();
+		const body = readBody(text);
 		if (!upstream.ok) {
-			const detail = (await upstream.text()).slice(0, 500);
+			const detail = body.ok ? text.slice(0, 500) : body.detail;
 			return {
 				ok: false,
 				status: 502,
-				error: `${options.model} returned HTTP ${upstream.status}. ${detail}`
+				error: `${options.model} returned HTTP ${upstream.status}. ${detail}`,
+				transient: upstream.status >= 500
 			};
 		}
-		const content = extractContent(await upstream.json());
+		if (!body.ok) return {
+			ok: false,
+			status: 502,
+			error: `${options.model} failed: ${body.detail}`,
+			transient: body.transient
+		};
+		const content = extractContent(body.payload);
 		if (content === null) return {
 			ok: false,
 			status: 502,
-			error: "The provider replied without any message content."
+			error: "The provider replied without any message content.",
+			transient: true
 		};
 		return {
 			ok: true,
@@ -175,9 +274,31 @@ async function callProvider(call) {
 		return {
 			ok: false,
 			status: 502,
-			error: `Request to the provider failed: ${error instanceof Error ? error.message : String(error)}`
+			error: `Request to the provider failed: ${error instanceof Error ? error.message : String(error)}`,
+			transient: error instanceof Error && error.name === "TimeoutError"
 		};
 	}
+}
+async function callProvider(call) {
+	const baseUrl = (call.options.baseUrl ?? "https://api.featherless.ai/v1").replace(/\/+$/, "");
+	const started = Date.now();
+	let last = {
+		ok: false,
+		status: 502,
+		error: "The provider was never called."
+	};
+	for (let i = 0; i < 2; i += 1) {
+		const outcome = await attempt(call, baseUrl);
+		if (outcome.ok) return outcome;
+		last = {
+			ok: false,
+			status: outcome.status,
+			error: outcome.error
+		};
+		if (outcome.transient !== true) break;
+		if (Date.now() - started > 25e3) break;
+	}
+	return last;
 }
 //#endregion
 //#region plugins/routes.ts

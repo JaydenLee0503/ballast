@@ -25,6 +25,30 @@ export interface AiProviderOptions {
 export const DEFAULT_BASE_URL = 'https://api.featherless.ai/v1'
 export const REQUEST_TIMEOUT_MS = 90_000
 
+/**
+ * One retry, and only for a failure the provider itself called transient.
+ *
+ * Featherless answers roughly one request in eight with a `server_error` /
+ * `no_response` body — an upstream completion service that did not come back —
+ * and the next attempt almost always succeeds. Without a retry that is a
+ * one-in-eight chance of a student pressing the button and being told nothing
+ * was built, which during a demo is the whole demo.
+ */
+export const MAX_ATTEMPTS = 2
+
+/**
+ * A retry is only worth starting if there is time to finish it.
+ *
+ * Measured round trips on a 72B model ran 11 s, 17 s and 34 s, and the Vercel
+ * function is capped (`vercel.json`) at 60 s. So a second attempt is started
+ * only when the first failed inside this budget: 25 + 34 = 59 s, which stays
+ * inside the cap even on the slowest reply seen. A transient failure normally
+ * comes back in a second or two, so in practice the budget is never the reason
+ * a retry is skipped — it is there so that a *slow* failure cannot turn into a
+ * platform timeout, which reports far worse than an honest error.
+ */
+export const RETRY_BUDGET_MS = 25_000
+
 export interface ChatMessage {
   role: 'system' | 'user'
   content: string
@@ -53,6 +77,112 @@ export async function readJsonBody(
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string))
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+/**
+ * Split a body into the JSON values it actually contains.
+ *
+ * WHY THIS IS NOT `JSON.parse`. Featherless intermittently answers an
+ * OpenAI-compatible completion request with HTTP 200 and *two* concatenated
+ * objects: a stub `chat.completion` with zero tokens, immediately followed by
+ * `{"error":{"message":"No successful response received from completion
+ * service","type":"server_error","code":"no_response"}}`. A single parse throws
+ * "Unexpected non-whitespace character after JSON at position 1691", which
+ * tells whoever is reading it nothing at all, and buries the one sentence that
+ * explains what went wrong.
+ *
+ * So the body is scanned for balanced top-level values rather than assumed to
+ * be one. Strings and escapes are tracked, because a brace inside a quoted
+ * string is not a nesting level — and the model's own reply is a JSON string
+ * full of braces.
+ */
+export function splitJsonValues(text: string): unknown[] {
+  const values: unknown[] = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{' || char === '[') {
+      if (depth === 0) start = i
+      depth += 1
+      continue
+    }
+    if (char === '}' || char === ']') {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        try {
+          values.push(JSON.parse(text.slice(start, i + 1)))
+        } catch {
+          // A value that does not parse on its own is not a value. Skipped
+          // rather than thrown on, so one malformed tail cannot hide a good
+          // payload that arrived ahead of it.
+        }
+        start = -1
+      }
+    }
+  }
+  return values
+}
+
+/** `{ error: { message } }`, the shape both OpenAI and Featherless use. */
+function errorMessage(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const error = (value as { error?: unknown }).error
+  if (typeof error === 'string') return error
+  if (typeof error !== 'object' || error === null) return null
+  const message = (error as { message?: unknown }).message
+  return typeof message === 'string' ? message : null
+}
+
+type BodyOutcome =
+  | { ok: true; payload: unknown }
+  | { ok: false; detail: string; transient: boolean }
+
+/**
+ * The payload a body carries, or the reason it carries none.
+ *
+ * An error object anywhere in the body wins over a completion that arrived
+ * beside it, because that is exactly the case above: the stub completion is
+ * empty and the error is the only true thing in the response.
+ */
+function readBody(text: string): BodyOutcome {
+  const values = splitJsonValues(text)
+
+  for (const value of values) {
+    const message = errorMessage(value)
+    if (message !== null) {
+      return {
+        ok: false,
+        detail: message,
+        // The provider's own classification, not a guess from the wording.
+        transient: /server_error|no_response|timeout|overload/i.test(text),
+      }
+    }
+  }
+
+  const first = values[0]
+  if (first === undefined) {
+    return {
+      ok: false,
+      // The raw text, clipped. Whoever reads this needs to see what arrived.
+      detail: `the body held no JSON value: ${text.slice(0, 200)}`,
+      transient: false,
+    }
+  }
+  return { ok: true, payload: first }
 }
 
 function extractContent(payload: unknown): string | null {
@@ -107,10 +237,12 @@ export type ProviderOutcome =
   | { ok: true; content: string }
   | { ok: false; status: number; error: string }
 
-export async function callProvider(call: ProviderCall): Promise<ProviderOutcome> {
+/** One attempt. `transient` says whether trying again is worth anything. */
+async function attempt(
+  call: ProviderCall,
+  baseUrl: string,
+): Promise<ProviderOutcome & { transient?: boolean }> {
   const { options } = call
-  const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
-
   try {
     const upstream = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -127,27 +259,71 @@ export async function callProvider(call: ProviderCall): Promise<ProviderOutcome>
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
+    const text = await upstream.text()
+    const body = readBody(text)
+
     if (!upstream.ok) {
-      const detail = (await upstream.text()).slice(0, 500)
+      // The provider's own sentence where it gave one, the raw text where it
+      // did not. "model not found" and "out of credit" are things a developer
+      // has to be able to read.
+      const detail = body.ok ? text.slice(0, 500) : body.detail
       return {
         ok: false,
         status: 502,
         error: `${options.model} returned HTTP ${upstream.status}. ${detail}`,
+        transient: upstream.status >= 500,
       }
     }
 
-    const payload: unknown = await upstream.json()
-    const content = extractContent(payload)
+    // A 200 is not a success on its own: this is where the two-object body
+    // lands, HTTP 200 with an error as its second value.
+    if (!body.ok) {
+      return {
+        ok: false,
+        status: 502,
+        error: `${options.model} failed: ${body.detail}`,
+        transient: body.transient,
+      }
+    }
+
+    const content = extractContent(body.payload)
     if (content === null) {
       return {
         ok: false,
         status: 502,
         error: 'The provider replied without any message content.',
+        transient: true,
       }
     }
     return { ok: true, content }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { ok: false, status: 502, error: `Request to the provider failed: ${message}` }
+    return {
+      ok: false,
+      status: 502,
+      error: `Request to the provider failed: ${message}`,
+      // A timeout or a dropped socket is worth one more go; anything else
+      // here is a programming error and repeating it changes nothing.
+      transient: error instanceof Error && error.name === 'TimeoutError',
+    }
   }
+}
+
+export async function callProvider(call: ProviderCall): Promise<ProviderOutcome> {
+  const baseUrl = (call.options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
+  const started = Date.now()
+  let last: ProviderOutcome = {
+    ok: false,
+    status: 502,
+    error: 'The provider was never called.',
+  }
+
+  for (let i = 0; i < MAX_ATTEMPTS; i += 1) {
+    const outcome = await attempt(call, baseUrl)
+    if (outcome.ok) return outcome
+    last = { ok: false, status: outcome.status, error: outcome.error }
+    if (outcome.transient !== true) break
+    if (Date.now() - started > RETRY_BUDGET_MS) break
+  }
+  return last
 }
