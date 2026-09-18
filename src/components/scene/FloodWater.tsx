@@ -19,11 +19,10 @@
  * demo laptop with no wifi.
  */
 
-import { useMemo, useRef, type RefObject } from 'react'
+import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { DoubleSide, type Mesh, type ShaderMaterial } from 'three'
+import { DoubleSide, type ShaderMaterial } from 'three'
 import { GROUND_EXTENT_M } from './scenery.ts'
-import type { SimulationMotion } from './motion.ts'
 
 /** Deep enough to read as water, sheer enough to see the building through. */
 const OPACITY = 0.62
@@ -63,20 +62,18 @@ const FRAGMENT_SHADER = /* glsl */ `
 `
 
 export interface FloodWaterProps {
-  /** Stillwater depth above grade. At or below zero, nothing is drawn. */
-  depth_m: number
   /**
-   * Where the simulation is up to. While an event is running the surface rises
-   * from grade to `depth_m`; at rest it simply sits at the depth the student
-   * set, because a flood is a condition the building stands in rather than
-   * something that arrives.
+   * Stillwater depth above grade. At or below zero, nothing is drawn.
+   *
+   * The surface sits here and stays here, including through a simulation: the
+   * water a student set is the water the engine analysed. See the note on
+   * `SimulationMotion` for why it does not rise.
    */
-  motion: RefObject<SimulationMotion>
+  depth_m: number
 }
 
-export function FloodWater({ depth_m, motion }: FloodWaterProps) {
+export function FloodWater({ depth_m }: FloodWaterProps) {
   const material = useRef<ShaderMaterial>(null)
-  const surface = useRef<Mesh>(null)
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
@@ -90,15 +87,12 @@ export function FloodWater({ depth_m, motion }: FloodWaterProps) {
   useFrame((state) => {
     const shader = material.current
     if (shader) shader.uniforms['uTime']!.value = state.clock.elapsedTime
-    const mesh = surface.current
-    if (mesh) mesh.position.y = depth_m * motion.current.waterRise
   })
 
   if (depth_m <= 0) return null
 
   return (
     <mesh
-      ref={surface}
       // Flat at the water line, facing up. Rotated rather than built in the XZ
       // plane so the plane geometry's own UVs stay conventional.
       rotation={[-Math.PI / 2, 0, 0]}

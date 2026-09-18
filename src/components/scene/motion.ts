@@ -88,9 +88,21 @@ export interface SimulationMotion {
   envelope: number
   /** 0..1, how much of the permanent damaged pose is applied. */
   pose: number
-  /** 0..1, how far the flood has risen towards its stillwater depth. */
-  waterRise: number
 }
+
+/**
+ * WHY THERE IS NO `waterRise`.
+ *
+ * An earlier version raised the flood from grade to its stillwater depth over
+ * the impact, which looked good in isolation and was wrong in the studio: the
+ * viewport draws the water while the depth slider is being dragged, so pressing
+ * Start snapped a three-metre flood down to the ground for the length of the
+ * countdown and then refilled it. The water a student set is the water the
+ * engine analysed, and it should be on screen at that depth the whole time.
+ *
+ * So a flood's drama is the arrows, the sliding and the floating — the parts
+ * that are engine output — rather than a rising surface that is not.
+ */
 
 export const RESTING_MOTION: SimulationMotion = {
   phase: 'idle',
@@ -98,7 +110,6 @@ export const RESTING_MOTION: SimulationMotion = {
   oscillation: 0,
   envelope: 0,
   pose: 0,
-  waterRise: 1,
 }
 
 /** Smooth 0..1 ramp. Cheaper than a cubic and indistinguishable at this size. */
@@ -128,21 +139,12 @@ export function motionAt(
 ): SimulationMotion {
   if (phase === 'idle') return RESTING_MOTION
 
-  if (phase === 'bracing') {
-    // Nothing has hit yet. The water is already there, because a flood is a
-    // condition the building is standing in rather than an arrival.
-    return { ...RESTING_MOTION, phase, waterRise: hazardKind === 'flood' ? 0 : 1 }
-  }
+  // Nothing has hit yet. A flood's water is already standing at its depth, and
+  // stays there — see the note on `SimulationMotion`.
+  if (phase === 'bracing') return { ...RESTING_MOTION, phase }
 
   if (phase === 'aftermath') {
-    return {
-      phase,
-      progress: 1,
-      oscillation: 0,
-      envelope: 0,
-      pose: 1,
-      waterRise: 1,
-    }
+    return { phase, progress: 1, oscillation: 0, envelope: 0, pose: 1 }
   }
 
   const progress = Math.min(1, Math.max(0, elapsed_s / (IMPACT_MS / 1000)))
@@ -162,7 +164,6 @@ export function motionAt(
     // The damage arrives during the second half of the event, so a student sees
     // the building fail rather than finding out afterwards.
     pose: smoothstep(POSE_START, 1, progress),
-    waterRise: hazardKind === 'flood' ? smoothstep(0, 0.7, progress) : 1,
   }
 }
 

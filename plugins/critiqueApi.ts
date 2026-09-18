@@ -7,11 +7,13 @@
  * never be one of them. The reading, the call and the error passthrough live in
  * `plugins/aiProvider.ts`, shared with /api/blueprint.
  *
- * It is a dev/preview-time convenience, not a production server. When the app
- * gets deployed the same three steps -- build messages, call the provider,
- * return the text -- move into a serverless function or a Supabase edge
- * function. `buildMessages` is pure and shared, so that move is a transport
- * change and nothing else.
+ * WHAT IS TRANSPORT AND WHAT IS NOT. The decisions -- is the config present,
+ * is the body the right shape, what does the provider say -- live in
+ * `handleCritique`, which knows nothing about HTTP beyond a status number. This
+ * plugin is the Vite dev/preview transport for it; `api/critique.ts` is the
+ * Vercel one. That is what "a transport change and nothing else" has to mean in
+ * practice: two callers, one implementation, and no second copy of the token
+ * budget or the validation to drift.
  */
 
 import type { Connect, Plugin, PreviewServer, ViteDevServer } from 'vite'
@@ -23,6 +25,7 @@ import {
   readJsonBody,
   send,
   type AiProviderOptions,
+  type RouteReply,
 } from './aiProvider.ts'
 
 /** Kept as a named export: it was this module's option type first. */
@@ -42,6 +45,33 @@ function hasContext(body: unknown): body is { context: CritiqueContext } {
   )
 }
 
+/**
+ * The route, minus HTTP.
+ *
+ * Takes an already-parsed body because the two transports read one very
+ * differently -- a Node stream here, `await request.json()` on Vercel -- and
+ * that difference is the only thing they should disagree about.
+ */
+export async function handleCritique(
+  options: AiProviderOptions,
+  body: unknown,
+): Promise<RouteReply> {
+  const configError = missingConfig(options)
+  if (configError !== null) return { status: 503, body: { error: configError } }
+  if (!hasContext(body)) {
+    return { status: 400, body: { error: 'Request body needs a `context` object.' } }
+  }
+
+  const outcome = await callProvider({
+    options,
+    messages: buildMessages(body.context),
+    temperature: TEMPERATURE,
+    maxTokens: MAX_TOKENS,
+  })
+  if (!outcome.ok) return { status: outcome.status, body: { error: outcome.error } }
+  return { status: 200, body: { content: outcome.content } }
+}
+
 export function critiqueApi(options: CritiqueApiOptions): Plugin {
   const handler: Connect.NextHandleFunction = (request, response, next) => {
     if (request.method !== 'POST') {
@@ -50,12 +80,6 @@ export function critiqueApi(options: CritiqueApiOptions): Plugin {
     }
 
     void (async () => {
-      const configError = missingConfig(options)
-      if (configError !== null) {
-        send(response, 503, { error: configError })
-        return
-      }
-
       let body: unknown
       try {
         body = await readJsonBody(request)
@@ -63,22 +87,8 @@ export function critiqueApi(options: CritiqueApiOptions): Plugin {
         send(response, 400, { error: 'Request body was not valid JSON.' })
         return
       }
-      if (!hasContext(body)) {
-        send(response, 400, { error: 'Request body needs a `context` object.' })
-        return
-      }
-
-      const outcome = await callProvider({
-        options,
-        messages: buildMessages(body.context),
-        temperature: TEMPERATURE,
-        maxTokens: MAX_TOKENS,
-      })
-      if (!outcome.ok) {
-        send(response, outcome.status, { error: outcome.error })
-        return
-      }
-      send(response, 200, { content: outcome.content })
+      const reply = await handleCritique(options, body)
+      send(response, reply.status, reply.body)
     })()
   }
 

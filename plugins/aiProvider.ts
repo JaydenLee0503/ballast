@@ -71,6 +71,19 @@ export function missingConfig(options: AiProviderOptions): string | null {
   return null
 }
 
+/**
+ * A status code and a JSON body, with no opinion about how they are sent.
+ *
+ * What a route decides, separated from how the answer travels. The two
+ * transports — the Vite middleware in dev, the Vercel function in production —
+ * both turn one of these into a response, so the decisions themselves exist
+ * once.
+ */
+export interface RouteReply {
+  status: number
+  body: unknown
+}
+
 export interface ProviderCall {
   options: AiProviderOptions
   messages: ChatMessage[]

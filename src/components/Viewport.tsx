@@ -364,7 +364,7 @@ function Scene({
           student typed. What the water is doing to the building is the arrows
           and the storey colours. */}
       {hazard.kind === 'flood' && (
-        <FloodWater depth_m={hazard.depth_m} motion={motion} />
+        <FloodWater depth_m={hazard.depth_m} />
       )}
 
       <CameraRig

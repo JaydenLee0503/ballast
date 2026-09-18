@@ -130,6 +130,8 @@ export interface ScorePanelProps {
   comparison: DesignComparison | null
   baselineLabel: string
   isBaseline: boolean
+  /** The baseline was measured under a different hazard. See useComparison. */
+  hazardMismatch: boolean
   onPinBaseline: () => void
   onResetBaseline: () => void
 }
@@ -140,6 +142,7 @@ export function ScorePanel({
   comparison,
   baselineLabel,
   isBaseline,
+  hazardMismatch,
   onPinBaseline,
   onResetBaseline,
 }: ScorePanelProps) {
@@ -222,6 +225,14 @@ export function ScorePanel({
         {isBaseline ? (
           <span className="truncate">
             This is the baseline · {baselineLabel}
+          </span>
+        ) : hazardMismatch ? (
+          /* Says why there are no percentages rather than leaving them
+             silently absent. A delta across two different events is not a
+             reading of the design — see `useComparison.hazardMismatch`. */
+          <span className="truncate">
+            <span className="font-bold text-ink">{baselineLabel}</span> was
+            measured under a different hazard · pin this one to compare
           </span>
         ) : (
           <span className="truncate">

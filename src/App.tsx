@@ -107,7 +107,8 @@ export default function App() {
   // back on the tab *they* had open rather than wherever Bo finished. The tour
   // borrows the panel; it does not get to keep it.
   const activeTab: RailTab = tutorialStep?.tab ?? tab
-  const { comparison, baselineLabel, isBaseline } = useComparison(result, structure)
+  const { comparison, baselineLabel, isBaseline, hazardMismatch } =
+    useComparison(result, structure)
 
   // After every hook, never inside a branch: the studio's hooks keep running
   // whichever page is showing, so switching views cannot reorder them.
@@ -217,6 +218,7 @@ export default function App() {
                   comparison={comparison}
                   baselineLabel={baselineLabel}
                   isBaseline={isBaseline}
+                  hazardMismatch={hazardMismatch}
                   onPinBaseline={pinBaseline}
                   onResetBaseline={resetBaseline}
                 />

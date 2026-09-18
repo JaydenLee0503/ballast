@@ -473,11 +473,33 @@ export function RoofCap({ structure, motion, pose, direction }: RoofCapProps) {
   const tiltAxis = useMemo(() => new Vector3(), [])
   const tilt = useMemo(() => new Quaternion(), [])
 
+  const totalHeight_m = structure.storeys.reduce(
+    (total, storey) => total + storey.height_m,
+    0,
+  )
+  /**
+   * The point the roof turns about, which must be the point the top storey
+   * turns about.
+   *
+   * A `StoreyBox` puts its group's origin at its own centre, so a tilt turns it
+   * in place. This group's origin would otherwise sit at ground level with the
+   * roof twenty metres above it, and rotating about that origin throws the roof
+   * sideways by roughly `height * sin(tilt)` — several metres on a collapsing
+   * tower — while the storey beneath it barely moves. That is exactly the
+   * "parapet hovering over a collapsed building" this component's props exist
+   * to prevent, arriving through the rotation rather than the translation.
+   */
+  const pivotY_m = totalHeight_m - (top?.height_m ?? 0) / 2
+
   useFrame(() => {
     const node = group.current
     if (node === null) return
     const { offset_m, drop_m, tilt_rad } = storeyPose(pose, motion.current)
-    node.position.set(direction[0] * offset_m, -drop_m, direction[1] * offset_m)
+    node.position.set(
+      direction[0] * offset_m,
+      pivotY_m - drop_m,
+      direction[1] * offset_m,
+    )
     if (tilt_rad === 0) {
       node.quaternion.identity()
     } else {
@@ -498,9 +520,10 @@ export function RoofCap({ structure, motion, pose, direction }: RoofCapProps) {
   // STOREY_GAP_M shorter than its storey and centred, so the stack really
   // stops half a gap below the sum of the heights. Using the sum floated every
   // roof 40 mm above its building.
-  const wallTop_m =
-    structure.storeys.reduce((total, storey) => total + storey.height_m, 0) -
-    STOREY_GAP_M / 2
+  //
+  // Measured from `pivotY_m` rather than from the ground, because everything
+  // below is drawn inside a group whose origin is that pivot.
+  const wallTop_m = totalHeight_m - STOREY_GAP_M / 2 - pivotY_m
 
   const prism = useMemo(() => {
     if (form === 'pitched') {
@@ -535,7 +558,7 @@ export function RoofCap({ structure, motion, pose, direction }: RoofCapProps) {
 
   if (prism !== null && geometry !== null) {
     return (
-      <group ref={group}>
+      <group ref={group} position={[0, pivotY_m, 0]}>
         <mesh
           castShadow
           receiveShadow
@@ -576,7 +599,7 @@ export function RoofCap({ structure, motion, pose, direction }: RoofCapProps) {
   ]
 
   return (
-    <group ref={group}>
+    <group ref={group} position={[0, pivotY_m, 0]}>
       <mesh
         receiveShadow
         position={[0, wallTop_m + DECK_THICKNESS_M / 2, 0]}

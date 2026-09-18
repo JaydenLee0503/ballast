@@ -35,16 +35,24 @@ describe('the phases', () => {
     expect(motionAt('idle', 10, 'wind')).toEqual(RESTING_MOTION)
   })
 
+  it('carries nothing that moves the flood surface', () => {
+    // The water stands at the depth the engine analysed for the whole run. An
+    // earlier version raised it during the impact, which meant pressing Start
+    // snapped a standing flood down to the ground and then refilled it. Pinned
+    // as a key list so re-adding a rise has to come past this test.
+    expect(Object.keys(motionAt('impact', 1, 'flood')).sort()).toEqual([
+      'envelope',
+      'oscillation',
+      'phase',
+      'pose',
+      'progress',
+    ])
+  })
+
   it('has not hit yet while bracing', () => {
     const braced = motionAt('bracing', 0.5, 'seismic')
     expect(braced.oscillation).toBe(0)
     expect(braced.pose).toBe(0)
-  })
-
-  it('leaves the water at grade while a flood is still arriving', () => {
-    expect(motionAt('bracing', 0.5, 'flood').waterRise).toBe(0)
-    // Nothing else rises, so nothing else is held back.
-    expect(motionAt('bracing', 0.5, 'wind').waterRise).toBe(1)
   })
 
   it('holds the damaged pose in the aftermath, with no shaking left', () => {
@@ -75,10 +83,6 @@ describe('the impact', () => {
 
   it('reaches its final pose by the end, so the aftermath does not jump', () => {
     expect(motionAt('impact', IMPACT_S, 'wind').pose).toBeCloseTo(1, 6)
-  })
-
-  it('fills the flood before the event is over', () => {
-    expect(motionAt('impact', IMPACT_S * 0.8, 'flood').waterRise).toBeCloseTo(1, 6)
   })
 })
 

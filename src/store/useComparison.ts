@@ -29,6 +29,24 @@ export interface ComparisonState {
   baselineLabel: string
   /** True when the design on screen is the baseline itself. */
   isBaseline: boolean
+  /**
+   * True when the baseline was measured under a *different hazard*, which is
+   * the one case where there is a baseline, a valid analysis, and still nothing
+   * worth comparing.
+   *
+   * A delta answers "what did my changes do". Across hazards it answers a
+   * different question — "is an earthquake worse than a gale" — and prints the
+   * answer in the same place, in the same colours. On the studio's own opening
+   * design, switching storm to earthquake without touching a slider reports the
+   * safety factor down 76% and the worst drift up 2003%, both flagged worse.
+   * Nothing about the building changed. That is a number a student would
+   * reasonably read as "I broke it", and `engine/compare.ts` exists precisely
+   * so that percentages on screen are defensible.
+   *
+   * So the deltas are withheld and the panel says why. Pinning the current
+   * design re-baselines under the new hazard, which is the useful move.
+   */
+  hazardMismatch: boolean
 }
 
 /**
@@ -52,10 +70,30 @@ export function useComparison(
     // Nothing to compare, but the design on screen is not therefore the
     // baseline — report what is actually true about each.
     if (result === null) {
-      return { comparison: null, baselineLabel: baseline.label, isBaseline }
+      return {
+        comparison: null,
+        baselineLabel: baseline.label,
+        isBaseline,
+        hazardMismatch: false,
+      }
     }
     if (isBaseline) {
-      return { comparison: null, baselineLabel: baseline.label, isBaseline: true }
+      return {
+        comparison: null,
+        baselineLabel: baseline.label,
+        isBaseline: true,
+        hazardMismatch: false,
+      }
+    }
+    // Compared under two different events, a delta is not a reading of the
+    // design. See `hazardMismatch`.
+    if (baseline.hazard.kind !== hazard.kind) {
+      return {
+        comparison: null,
+        baselineLabel: baseline.label,
+        isBaseline: false,
+        hazardMismatch: true,
+      }
     }
 
     try {
@@ -71,12 +109,18 @@ export function useComparison(
         ),
         baselineLabel: baseline.label,
         isBaseline: false,
+        hazardMismatch: false,
       }
     } catch {
       // A baseline that no longer analyses is not worth breaking the page for.
       // It can only happen if a design got in without passing the parser, which
       // is a bug to fix at the source rather than to render an error about.
-      return { comparison: null, baselineLabel: baseline.label, isBaseline: false }
+      return {
+        comparison: null,
+        baselineLabel: baseline.label,
+        isBaseline: false,
+        hazardMismatch: false,
+      }
     }
   }, [baseline, hazard, result, structure])
 }

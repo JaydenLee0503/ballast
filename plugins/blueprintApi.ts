@@ -21,6 +21,7 @@ import {
   readJsonBody,
   send,
   type AiProviderOptions,
+  type RouteReply,
 } from './aiProvider.ts'
 
 /** A name, a dozen numbers, two short sentences and a list of ids. */
@@ -45,6 +46,47 @@ function hasBlueprintRequest(body: unknown): body is BlueprintBody {
   )
 }
 
+/**
+ * The route, minus HTTP. See the note on `handleCritique`: this plugin is the
+ * Vite transport for it and `api/blueprint.ts` is the Vercel one, so the token
+ * budget and every validation message exist once.
+ */
+export async function handleBlueprint(
+  options: AiProviderOptions,
+  body: unknown,
+): Promise<RouteReply> {
+  const configError = missingConfig(options)
+  if (configError !== null) return { status: 503, body: { error: configError } }
+  if (!hasBlueprintRequest(body)) {
+    return {
+      status: 400,
+      body: {
+        error: 'Request body needs a `description` string and a `catalogue` object.',
+      },
+    }
+  }
+
+  const description = body.description.trim()
+  if (description === '') {
+    return { status: 400, body: { error: 'Describe the building you want first.' } }
+  }
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    return {
+      status: 400,
+      body: { error: `Keep the description under ${MAX_DESCRIPTION_LENGTH} characters.` },
+    }
+  }
+
+  const outcome = await callProvider({
+    options,
+    messages: buildBlueprintMessages(description, body.catalogue),
+    temperature: TEMPERATURE,
+    maxTokens: MAX_TOKENS,
+  })
+  if (!outcome.ok) return { status: outcome.status, body: { error: outcome.error } }
+  return { status: 200, body: { content: outcome.content } }
+}
+
 export function blueprintApi(options: AiProviderOptions): Plugin {
   const handler: Connect.NextHandleFunction = (request, response, next) => {
     if (request.method !== 'POST') {
@@ -53,12 +95,6 @@ export function blueprintApi(options: AiProviderOptions): Plugin {
     }
 
     void (async () => {
-      const configError = missingConfig(options)
-      if (configError !== null) {
-        send(response, 503, { error: configError })
-        return
-      }
-
       let body: unknown
       try {
         body = await readJsonBody(request)
@@ -66,36 +102,8 @@ export function blueprintApi(options: AiProviderOptions): Plugin {
         send(response, 400, { error: 'Request body was not valid JSON.' })
         return
       }
-      if (!hasBlueprintRequest(body)) {
-        send(response, 400, {
-          error: 'Request body needs a `description` string and a `catalogue` object.',
-        })
-        return
-      }
-
-      const description = body.description.trim()
-      if (description === '') {
-        send(response, 400, { error: 'Describe the building you want first.' })
-        return
-      }
-      if (description.length > MAX_DESCRIPTION_LENGTH) {
-        send(response, 400, {
-          error: `Keep the description under ${MAX_DESCRIPTION_LENGTH} characters.`,
-        })
-        return
-      }
-
-      const outcome = await callProvider({
-        options,
-        messages: buildBlueprintMessages(description, body.catalogue),
-        temperature: TEMPERATURE,
-        maxTokens: MAX_TOKENS,
-      })
-      if (!outcome.ok) {
-        send(response, outcome.status, { error: outcome.error })
-        return
-      }
-      send(response, 200, { content: outcome.content })
+      const reply = await handleBlueprint(options, body)
+      send(response, reply.status, reply.body)
     })()
   }
 

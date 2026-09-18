@@ -18,7 +18,9 @@ import {
 } from '@/lib/limits.ts'
 import {
   DEFAULT_HAZARD,
+  DEFAULT_SEISMIC_HAZARD,
   DEFAULT_STRUCTURE,
+  DEFAULT_WIND_HAZARD,
   deriveTaper,
   STARTING_BASELINE,
   useDesignStore,
@@ -454,5 +456,43 @@ describe('the hazard', () => {
     const { baseline } = useDesignStore.getState()
     useDesignStore.getState().setHazardKind('seismic')
     expect(useDesignStore.getState().hazard).not.toBe(baseline.hazard)
+  })
+})
+
+/**
+ * A delta answers "what did my changes do". Across two hazards it answers a
+ * different question in the same place and the same colours, so it is withheld
+ * — see `useComparison.hazardMismatch`. Pinned here because the failure is
+ * silent: the percentages are plausible, they are just about something else.
+ */
+describe('comparing across hazards', () => {
+  it('produces a large apparent change from switching alone', () => {
+    // The thing the guard above exists to stop being shown as a design delta.
+    const structure = useDesignStore.getState().structure
+    const wind = analyze(structure, DEFAULT_WIND_HAZARD, MATERIAL_LIBRARY)
+    const quake = analyze(structure, DEFAULT_SEISMIC_HAZARD, MATERIAL_LIBRARY)
+    expect(quake.scoreCard.safetyFactor).toBeLessThan(
+      wind.scoreCard.safetyFactor / 2,
+    )
+    expect(quake.scoreCard.driftRatio).toBeGreaterThan(
+      wind.scoreCard.driftRatio * 10,
+    )
+    // ...on a structure neither analysis changed.
+    expect(structure).toBe(useDesignStore.getState().structure)
+  })
+
+  it('leaves the baseline on its own hazard when the live one switches', () => {
+    const { baseline } = useDesignStore.getState()
+    useDesignStore.getState().setHazardKind('seismic')
+    expect(baseline.hazard.kind).toBe('wind')
+    expect(useDesignStore.getState().hazard.kind).toBe('seismic')
+  })
+
+  it('re-baselines onto the new hazard when the design is pinned', () => {
+    useDesignStore.getState().setHazardKind('flood')
+    useDesignStore.getState().pinBaseline()
+    const state = useDesignStore.getState()
+    expect(state.baseline.hazard.kind).toBe('flood')
+    expect(state.baseline.hazard).toBe(state.hazard)
   })
 })
