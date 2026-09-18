@@ -15,17 +15,28 @@
  * into the browser bundle. This module runs on the server and is the only place
  * in production that ever sees it.
  *
- * TWO CONSTRAINTS FROM VERCEL, both worth knowing before editing:
+ * THIS FILE IS NOT WHAT SHIPS. `scripts/bundleFunctions.mjs` bundles it into
+ * `api/critique.js`, which is what Vercel actually runs, and the reason is
+ * worth knowing before editing: Vercel transpiles each file under `api/` on its
+ * own and does not rewrite import specifiers, so an `import ... from
+ * '../plugins/routes.ts'` survived into the emitted JavaScript and Node threw
+ * ERR_MODULE_NOT_FOUND on a `.ts` path at runtime. Bundling leaves nothing to
+ * resolve. Edit here; never edit `api/*.js`.
+ *
+ * THREE CONSTRAINTS worth knowing:
  *
  *  - **Relative imports only.** Vercel's function compiler ignores tsconfig
- *    "Path Mappings", so the `@/` alias the rest of the app uses does not
- *    resolve in this directory. `../src/...` is not a style choice.
+ *    "Path Mappings", so the `@/` alias the rest of the app uses would not
+ *    resolve here even before bundling. `../src/...` is not a style choice.
+ *  - **No npm package may be reachable.** `plugins/routeDeps.test.ts` asserts
+ *    it. Above all not Vite, whose types the dev-server transport legitimately
+ *    imports.
  *  - **Web-standard signature.** A named method export taking a `Request` and
  *    returning a `Response`, which needs no `@vercel/node` dependency and
  *    leaves no ambiguity about whether the body was already parsed.
  */
 
-import { handleCritique } from '../plugins/critiqueApi.ts'
+import { handleCritique } from '../plugins/routes.ts'
 
 function json(reply: { status: number; body: unknown }): Response {
   return new Response(JSON.stringify(reply.body), {

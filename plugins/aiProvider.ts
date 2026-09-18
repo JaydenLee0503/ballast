@@ -14,7 +14,6 @@
  * because every message builder is pure.
  */
 
-import type { Connect } from 'vite'
 import type { ServerResponse } from 'node:http'
 
 export interface AiProviderOptions {
@@ -37,8 +36,17 @@ export function send(response: ServerResponse, status: number, body: unknown): v
   response.end(JSON.stringify(body))
 }
 
+/**
+ * Typed structurally rather than as Vite's `Connect.IncomingMessage`, so that
+ * NOTHING on the path from a serverless function to the provider imports Vite
+ * — not even for a type. A type-only import should be erased before anything
+ * tries to resolve it, but "should be" is a bet on another tool's compiler, and
+ * losing it means a bundler pulling a dev server into a 60-second function.
+ * A Node request stream satisfies this, so the Vite transport still passes its
+ * own object straight in.
+ */
 export async function readJsonBody(
-  request: Connect.IncomingMessage,
+  request: AsyncIterable<Buffer | string>,
 ): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const chunk of request) {
@@ -62,11 +70,15 @@ function extractContent(payload: unknown): string | null {
  * quiet substitution of a model you did not choose is worse than an error.
  */
 export function missingConfig(options: AiProviderOptions): string | null {
+  // Phrased for both transports. Locally the fix is .env and a restart; on a
+  // host it is the project's environment variables and a redeploy. Naming only
+  // one of them sends whoever is reading it to the wrong place, and this string
+  // is the first thing anybody sees when a deploy is misconfigured.
   if (!options.apiKey) {
-    return 'FEATHERLESS_API_KEY is not set. Copy .env.example to .env, add your key, and restart the dev server.'
+    return 'FEATHERLESS_API_KEY is not set. Add it to .env and restart the dev server, or to your host\'s environment variables and redeploy.'
   }
   if (!options.model) {
-    return 'FEATHERLESS_MODEL is not set. Add the exact model id from the Featherless catalogue to .env and restart the dev server.'
+    return 'FEATHERLESS_MODEL is not set. Add the exact model id from the Featherless catalogue to .env and restart the dev server, or to your host\'s environment variables and redeploy.'
   }
   return null
 }

@@ -35,7 +35,11 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: 'node',
-      include: ['src/**/*.test.ts'],
+      // `plugins/` is in here for one test: the production API routes must not
+      // reach an npm package, and asserting that means reading the module graph
+      // off disk with node:fs — which `src` deliberately has no types for,
+      // because nothing in the app may import a Node builtin.
+      include: ['src/**/*.test.ts', 'plugins/**/*.test.ts'],
       coverage: {
         provider: 'v8',
         // The engine and the AI plumbing are the parts that must not rot; the

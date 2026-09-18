@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "node ./node_modules/vite/bin/vite.js",
-    "build": "node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
+    "build": "node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build && node ./scripts/bundleFunctions.mjs",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "typecheck": "node ./node_modules/typescript/bin/tsc -b --force",
     "test": "node ./node_modules/vitest/vitest.mjs run",
     "test:watch": "node ./node_modules/vitest/vitest.mjs",
-    "coverage": "node ./node_modules/vitest/vitest.mjs run --coverage"
+    "coverage": "node ./node_modules/vitest/vitest.mjs run --coverage",
+    "build:api": "node ./scripts/bundleFunctions.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
