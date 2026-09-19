@@ -87,6 +87,7 @@ src/
       StoreyCracks.tsx damage, drawn from the engine's own banding
       HazardArrows.tsx per-storey arrows, length from lateralForce_kN
       FloodWater.tsx   the water surface, at the depth the student set
+      cameraBounds.ts  how far the camera may get from the design. pure
       motion.ts        how the building moves during an event. pure
       useSimulationMotion.ts  that motion, as a per-frame ref
       World.tsx        sky, sun, streets, trees, traffic, neighbours
@@ -117,6 +118,7 @@ src/
     hazard.ts          human names and colours for the three hazards. copy only
     cracks.ts          seeded crack layout, in perimeter coordinates
     orbit.ts           rigid camera rotation about an arbitrary pivot
+    pointer.ts         finger or mouse; the device, and the single event
     facade.ts          human names for the envelope systems. copy only
     palette.ts         utilisation colour bands (source of truth for colour)
     sky.ts             building height -> time of day, as a pure palette
@@ -788,6 +790,37 @@ whoever followed it was sent a building, not an invitation to read the pitch.
   fragment shader rather than a texture — the same rule that keeps HDRIs out of
   the scene. It reads no engine output. The arrows and the storey colours are
   the claims.
+- **The camera is on a leash, and the leash is the design's own size.**
+  `scene/cameraBounds.ts` derives how far back the view may go from the
+  distance that frames the building — the same function "Frame view" uses, so
+  the button can never put the camera somewhere the leash immediately drags it
+  back from, which `cameraBounds.test.ts` holds as a property over every design
+  the sliders can express. The old limit was a flat 600 m: barely enough for a
+  192 m tower and fourteen storeys of empty sky over a bungalow. The ceiling is
+  capped again by the city's own half-width, because past the last block there
+  is nothing to look at. The orbit *target* is leashed too, and that is the half
+  that is not optional: `zoomToCursor` dollies toward the pointer, so aiming at
+  the horizon walks the pivot out past the streets with the distance limit
+  satisfied the whole way. Both corrections are applied to the camera and the
+  target as one translation, which is what makes the limit read as the view
+  stopping rather than lurching — the same rigid-body property `lib/orbit.ts`
+  relies on for rotation.
+- **On a phone the panel is a sheet, not a row.** Below `lg` the controls slide
+  up over the viewport at `min(72dvh, 32rem)` and scroll inside that; stacking
+  them under the 3D view instead would hand the scene whatever height a
+  twenty-four storey table left over, which is none. It is the same element in
+  both layouts and it is never unmounted, so it keeps its tab, its scroll
+  position and any critique already fetched. `h-dvh` throughout, never
+  `h-screen`: `100vh` on a phone is measured as though the address bar were
+  already hidden, which puts the bottom of the app — here, the sheet — under
+  the browser's own chrome.
+- **Touch is a different pointer, not a smaller mouse.** `lib/pointer.ts`
+  answers two separate questions: what the device is (which picks the render
+  resolution and the wording of the gesture hint, before anybody has touched
+  anything) and what one event was (which decides whether the hover card
+  appears at all — a finger has no hover and fires no reliable exit, so a tap
+  would pin the card to the screen). Tapping still selects, and the storey
+  table says everything the card does.
 - **Rotation is about the point under the cursor**, and it is ours, not
   OrbitControls'. Its model makes `target` both the pivot and the centre of the
   screen — `update()` ends in `lookAt(target)` — so moving the target onto the
@@ -960,6 +993,11 @@ The engine is the part that must not rot, so it is the part with tests.
   heavy one does not.
 - `damage.test.ts` is about what the banding must NOT do: invent a collapse, or
   report a building standing when its overturning factor says otherwise.
+- `scene/cameraBounds.test.ts` holds the one a wrong constant would break in
+  silence: every design the controls can express frames to a distance inside
+  its own leash. It also pins that a target already in bounds is corrected by
+  exactly nothing, and that one out of bounds comes back to the edge on the
+  bearing it left on rather than being flung at the centre.
 - `scene/motion.test.ts` pins the two claims the animation makes — that movement
   is proportional to the engine's drift, and that a storey only falls at or
   above the index `DamageReport` gave.

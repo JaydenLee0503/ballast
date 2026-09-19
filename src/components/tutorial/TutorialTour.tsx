@@ -49,6 +49,11 @@ const RING_TRANSITION = 'width 200ms ease-out, height 200ms ease-out'
 const CARD_W = 340
 const CARD_H = 300
 const EDGE_PX = 16
+/**
+ * Below this the screen is a phone's, and the card cannot sit beside the thing
+ * it describes — there is no beside. Matches Tailwind's `sm`.
+ */
+const NARROW_PX = 640
 
 interface Rect {
   top: number
@@ -79,25 +84,54 @@ function measure(anchor: string | null): Rect | null {
 }
 
 /**
- * Put the card where the highlighted control is not.
+ * Put the card where the highlighted control is not, and never off the screen.
  *
- * Only the horizontal half is chosen from the target — vertically it sits low,
- * where a card is least likely to cover the thing being talked about. Both axes
- * are clamped to the viewport last, so a narrow window degrades to "on screen"
- * rather than to "mostly off the left edge".
+ * On a wide screen the horizontal half is chosen from the target and the card
+ * sits low, where it is least likely to cover the thing being talked about. On
+ * a phone there is no horizontal half to choose — the card is most of the
+ * width — so the axes swap: the card goes to whichever *end* of the screen the
+ * control is not at. Its width is clamped to the window in both cases, because
+ * a fixed 340px card on a 320px phone hangs its buttons over the edge.
  */
-function cardPosition(rect: Rect | null): { top: number; left: number } {
+function cardPosition(rect: Rect | null): {
+  top: number
+  left: number
+  width: number
+} {
   const vw = window.innerWidth
   const vh = window.innerHeight
+  // The card is never wider than the screen it is on. A fixed 340 is 20px
+  // over the edge of a small phone, and the button that closes the tour is
+  // the part that goes over.
+  const width = Math.min(CARD_W, vw - EDGE_PX * 2)
+
   if (rect === null) {
-    return { top: (vh - CARD_H) / 2, left: (vw - CARD_W) / 2 }
+    return { top: (vh - CARD_H) / 2, left: (vw - width) / 2, width }
   }
+
+  // On a phone the choice is vertical, not horizontal: the card spans the
+  // width, so "put it where the control is not" can only mean the other end
+  // of the screen. The controls live in a sheet across the bottom, so most
+  // steps put the card at the top — which is also where it does not cover the
+  // building it is talking about.
+  if (vw < NARROW_PX) {
+    const targetBelowMiddle = rect.top + rect.height / 2 > vh / 2
+    return {
+      top: targetBelowMiddle
+        ? EDGE_PX
+        : Math.max(EDGE_PX, vh - CARD_H - EDGE_PX),
+      left: (vw - width) / 2,
+      width,
+    }
+  }
+
   const targetCentre = rect.left + rect.width / 2
-  const left = targetCentre > vw / 2 ? EDGE_PX : vw - CARD_W - EDGE_PX
+  const left = targetCentre > vw / 2 ? EDGE_PX : vw - width - EDGE_PX
   const top = Math.min(rect.top + rect.height + 12, vh - CARD_H - EDGE_PX)
   return {
     top: Math.max(EDGE_PX, top),
-    left: Math.max(EDGE_PX, Math.min(left, vw - CARD_W - EDGE_PX)),
+    left: Math.max(EDGE_PX, Math.min(left, vw - width - EDGE_PX)),
+    width,
   }
 }
 
@@ -217,8 +251,12 @@ export function TutorialTour() {
         tabIndex={-1}
         role="dialog"
         aria-label="Getting started with Ballast"
-        className="sticker pointer-events-auto absolute w-[340px] p-4 outline-none"
-        style={{ top: position.top, left: position.left }}
+        className="sticker pointer-events-auto absolute p-4 outline-none"
+        style={{
+          top: position.top,
+          left: position.left,
+          width: position.width,
+        }}
       >
         <div className="flex items-start gap-3">
           <Bo mood={step.mood} size={54} className="-mt-1 shrink-0" />

@@ -3,7 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` lets the page paint under a notch and a home
+         indicator; `index.css` pays that back as safe-area padding on the
+         things that must not sit under them. No `maximum-scale`: pinch-zoom
+         is an accessibility feature, and the 3D canvas already takes its own
+         gestures via `touch-action: none`. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#fff7ef" />
+    <meta
+      name="description"
+      content="Build a tower, throw a storm, an earthquake or a flood at it, and redesign it to survive — on carbon, cost and safety."
+    />
     <title>Ballast</title>
   </head>
   <body>

@@ -20,6 +20,20 @@
  * change and nothing else: the panel keeps its state and its scroll position,
  * and the analysis it is showing goes on being recomputed, so unfolding is
  * instant rather than a reload.
+ *
+ * ON A PHONE THE TWO PANES CANNOT SIT SIDE BY SIDE, and they must not sit one
+ * above the other either: a stacked panel is a column of sliders that grows
+ * with the design, and the 3D view -- the thing the product is -- would be
+ * squeezed to a strip by a building with twenty-four storeys in the table.
+ * So below `lg` the panel becomes a sheet over the viewport, capped at 72% of
+ * the *dynamic* viewport height and scrolling inside that. The scene keeps the
+ * whole screen underneath it, and the same "Hide panel" button slides it away.
+ *
+ * `h-dvh`, not `h-screen`, throughout. `100vh` on a phone is the height the
+ * page would have if the browser's address bar were hidden, which it is not
+ * when the page loads -- so a `h-screen` app column is roughly one toolbar
+ * taller than the screen, and the bottom of it (here: the panel's sheet) is
+ * underneath the browser chrome and unreachable.
  */
 
 import { useState } from 'react'
@@ -115,8 +129,11 @@ export default function App() {
   if (view === 'landing') return <Landing onOpenStudio={openStudio} />
 
   return (
-    <div className="flex h-screen flex-col bg-paper font-body text-ink">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b-2 border-ink/12 px-5 py-3">
+    // The safe-area inset sits on the app column rather than on each piece of
+    // chrome inside it: one place to get right, and the strip under a notch or
+    // a home indicator is then paper, which is what `theme-color` promises.
+    <div className="flex h-dvh flex-col overflow-hidden bg-paper pt-safe-t pr-safe-r pb-safe-b pl-safe-l font-body text-ink">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b-2 border-ink/12 px-3 py-2 sm:px-5 sm:py-3">
         <button
           type="button"
           onClick={openLanding}
@@ -126,10 +143,16 @@ export default function App() {
         </button>
         {/* Names the clause family the analysis on screen actually came from,
             which changes with the hazard — Chapter 5 is flood, 11-12 is
-            seismic, 26-27 is wind. */}
+            seismic, 26-27 is wind. That provenance is the credibility of the
+            whole app, so it stays on anything with room; on a phone there is
+            none, and the hazard alone — the half that changes — is worth more
+            than a line that wraps three times. */}
         <p className="font-pixel text-[0.7rem] tracking-widest text-ink/45">
-          {HAZARD_LABEL[hazard.kind].toUpperCase()} ·{' '}
-          {HAZARD_PROVENANCE[hazard.kind]} · EVERY NUMBER FROM THE ENGINE
+          {HAZARD_LABEL[hazard.kind].toUpperCase()}
+          <span className="max-sm:hidden">
+            {' '}
+            · {HAZARD_PROVENANCE[hazard.kind]} · EVERY NUMBER FROM THE ENGINE
+          </span>
         </p>
 
         {shared.loadedName !== null && (
@@ -148,12 +171,19 @@ export default function App() {
 
         <button
           type="button"
-          onClick={startTutorial}
+          // Half the tour's steps ring a control inside the panel, and on a
+          // phone a closed panel is a sheet translated off the bottom of the
+          // screen — the ring would be drawn around something nobody can see.
+          // The tour borrows the panel the same way it borrows the tab.
+          onClick={() => {
+            setPanelOpen(true)
+            startTutorial()
+          }}
           title="Bo will show you around"
-          className="ml-auto flex items-center gap-1.5 rounded-full border-2 border-ink bg-white py-1 pl-1.5 pr-3 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+          className="ml-auto flex min-h-9 items-center gap-1.5 rounded-full border-2 border-ink bg-white py-1 pl-1.5 pr-1.5 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 sm:pr-3"
         >
           <Bo mood="wave" size={18} />
-          Show me around
+          <span className="max-sm:hidden">Show me around</span>
         </button>
 
         <button
@@ -161,12 +191,17 @@ export default function App() {
           onClick={() => setPanelOpen((open) => !open)}
           aria-expanded={panelOpen}
           aria-controls="studio-panel"
-          className="rounded-full border-2 border-ink bg-white px-3 py-1 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+          className="min-h-9 rounded-full border-2 border-ink bg-white px-3 py-1 font-display text-xs shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
         >
+          {/* Two glyphs, because below `lg` the panel is a sheet that slides
+              down rather than a column that closes sideways, and an arrow
+              pointing the wrong way is worse than no arrow. */}
           <span aria-hidden="true" className="mr-1.5 inline-block">
-            {panelOpen ? '›' : '‹'}
+            <span className="lg:hidden">{panelOpen ? '⌄' : '⌃'}</span>
+            <span className="max-lg:hidden">{panelOpen ? '›' : '‹'}</span>
           </span>
-          {panelOpen ? 'Hide panel' : 'Show panel'}
+          {panelOpen ? 'Hide' : 'Show'}
+          <span className="max-sm:hidden"> panel</span>
         </button>
       </header>
 
@@ -187,7 +222,7 @@ export default function App() {
         </main>
       ) : (
         <main
-          className={`grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] transition-[grid-template-columns] duration-300 ease-out lg:grid-rows-1 ${
+          className={`relative grid min-h-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden transition-[grid-template-columns] duration-300 ease-out ${
             panelOpen
               ? 'lg:grid-cols-[minmax(0,1fr)_24rem]'
               : 'lg:grid-cols-[minmax(0,1fr)_0rem]'
@@ -197,20 +232,42 @@ export default function App() {
             <Viewport result={result} structure={structure} hazard={hazard} />
           </div>
 
-          {/* Folded, the column goes to zero width and the panel is clipped
-              rather than unmounted — it keeps its tab, its scroll position and
-              any critique already fetched. `inert` takes it out of the tab
-              order and off the accessibility tree while it is not visible,
-              which clipping alone would not do. The inner column holds its
-              full width throughout, so the contents slide out of view instead
-              of reflowing on the way. */}
+          {/* Two layouts, one element, and in both of them the panel is only
+              ever *moved* — never unmounted. It keeps its tab, its scroll
+              position and any critique already fetched, so reopening is
+              instant rather than a reload.
+
+              From `lg` up it is the second grid column: folded, the column
+              goes to zero width and the contents are clipped, while the inner
+              column holds its full 24rem so they slide out of view rather than
+              reflowing on the way.
+
+              Below `lg` it is a sheet over the viewport, because the
+              alternative — a row under it — hands the 3D view whatever height
+              a twenty-four storey table leaves over, which on a phone is
+              nothing. It slides down out of the frame rather than closing
+              sideways.
+
+              Its height there is `min(72dvh, 32rem)` and that is a height,
+              not a max-height: the inner column is `h-full`, and a percentage
+              height against an `auto` parent resolves to `auto` — the scroll
+              area would then grow to its content and simply be clipped, with
+              nothing to scroll. 72% leaves the top of the building visible
+              behind the sheet; the 32rem is for a tall phone, where 72% is
+              more panel than anybody needs and less city than they want.
+
+              `inert` in both: it takes the panel out of the tab order and off
+              the accessibility tree while it is not visible, which clipping
+              and translating alone would not do. */}
           <aside
             id="studio-panel"
             inert={!panelOpen}
-            className={`min-h-0 overflow-hidden ${panelOpen ? '' : 'max-lg:hidden'}`}
+            className={`min-h-0 overflow-hidden max-lg:absolute max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-30 max-lg:h-[min(72dvh,32rem)] max-lg:rounded-t-2xl max-lg:shadow-[0_-4px_0_0_var(--color-ink)] max-lg:transition-transform max-lg:duration-300 max-lg:ease-out motion-reduce:transition-none ${
+              panelOpen ? 'max-lg:translate-y-0' : 'max-lg:translate-y-full'
+            }`}
           >
-            <div className="flex h-full flex-col border-ink/12 max-lg:border-t-2 lg:w-96 lg:border-l-2">
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+            <div className="flex h-full flex-col bg-paper border-ink/12 max-lg:rounded-t-2xl max-lg:border-t-2 lg:w-96 lg:border-l-2">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
                 <div data-tour="score">
                 <ScorePanel
                   result={result}

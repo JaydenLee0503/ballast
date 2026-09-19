@@ -152,7 +152,10 @@ function Card({
 }) {
   return (
     <div
-      className={`rounded-2xl border-[3px] border-ink bg-white p-5 shadow-[5px_5px_0_0_var(--color-ink)] ${tilt}`}
+      // The tilt is charm, and on a phone it is also the thing that pushes a
+      // 3-degree corner past the edge of the screen and makes the whole page
+      // scroll sideways. Straight below `sm`, jaunty above it.
+      className={`rounded-2xl border-[3px] border-ink bg-white p-4 shadow-[5px_5px_0_0_var(--color-ink)] max-sm:rotate-0 sm:p-5 ${tilt}`}
     >
       <span className={`inline-block size-5 rounded-md border-2 border-ink ${tone}`} />
       <h3 className="mt-3 font-display text-lg text-ink">{title}</h3>
@@ -185,8 +188,13 @@ export interface LandingProps {
 
 export function Landing({ onOpenStudio }: LandingProps) {
   return (
-    <div className="h-screen overflow-y-auto bg-paper font-body text-ink">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+    // `min-h-dvh` and the document's own scroll, not `h-screen` with an inner
+    // overflow. A nested scroller on a phone pins the browser's address bar
+    // open for the whole page and makes momentum scrolling feel detached; and
+    // `100vh` is measured as though that bar were already gone, so the last
+    // section would sit under it.
+    <div className="min-h-dvh bg-paper pt-safe-t pr-safe-r pb-safe-b pl-safe-l font-body text-ink">
+      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <span className="font-display text-xl tracking-tight">Ballast</span>
         <button
           type="button"
@@ -197,13 +205,13 @@ export function Landing({ onOpenStudio }: LandingProps) {
         </button>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 pb-20">
-        <section className="grid items-center gap-8 pt-6 pb-16 md:grid-cols-[1.1fr_1fr] md:pt-12">
+      <main className="mx-auto max-w-5xl px-4 pb-16 sm:px-6 sm:pb-20">
+        <section className="grid items-center gap-8 pt-4 pb-12 sm:pb-16 md:grid-cols-[1.1fr_1fr] md:pt-12">
           <div>
             <p className="font-pixel text-sm tracking-widest text-bloom">
               STACK → DISASTER → REBUILD
             </p>
-            <h1 className="mt-3 font-display text-4xl leading-[1.08] text-ink md:text-6xl">
+            <h1 className="mt-3 font-display text-[2rem] leading-[1.08] text-ink sm:text-4xl md:text-6xl">
               Build a tower.
               <br />
               Then try to knock it over.
@@ -238,7 +246,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
         {/* Three hazards, named by what they do rather than by the clause they
             come from. The consequence is the lesson; the citations are in the
             studio, beside the numbers they produced. */}
-        <section className="rounded-3xl border-[3px] border-ink bg-white px-6 py-10 shadow-[6px_6px_0_0_var(--color-ink)] md:px-10">
+        <section className="rounded-3xl border-[3px] border-ink bg-white px-4 py-8 shadow-[6px_6px_0_0_var(--color-ink)] sm:px-6 sm:py-10 md:px-10">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             Pick your disaster
@@ -272,7 +280,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </p>
         </section>
 
-        <section className="mt-16 rounded-3xl border-[3px] border-ink bg-bloom/15 px-6 py-10 md:px-10">
+        <section className="mt-12 rounded-3xl border-[3px] border-ink bg-bloom/15 px-4 py-8 sm:mt-16 sm:px-6 sm:py-10 md:px-10">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             Three things to juggle
@@ -300,7 +308,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </div>
         </section>
 
-        <section id="how" className="py-16">
+        <section id="how" className="py-12 sm:py-16">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             How it works
@@ -322,7 +330,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </div>
         </section>
 
-        <section className="rounded-3xl border-[3px] border-ink bg-white px-6 py-10 shadow-[6px_6px_0_0_var(--color-ink)] md:px-10">
+        <section className="rounded-3xl border-[3px] border-ink bg-white px-4 py-8 shadow-[6px_6px_0_0_var(--color-ink)] sm:px-6 sm:py-10 md:px-10">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             These are real numbers
@@ -368,7 +376,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </div>
         </section>
 
-        <section className="py-16">
+        <section className="py-12 sm:py-16">
           <PixelRule />
           <h2 className="mt-4 font-display text-2xl text-ink md:text-3xl">
             Stuff we are upfront about
@@ -399,7 +407,7 @@ export function Landing({ onOpenStudio }: LandingProps) {
           </ul>
         </section>
 
-        <section className="rounded-3xl border-[3px] border-ink bg-coral/15 px-6 py-14 text-center">
+        <section className="rounded-3xl border-[3px] border-ink bg-coral/15 px-4 py-12 text-center sm:px-6 sm:py-14">
           <h2 className="font-display text-3xl text-ink md:text-4xl">
             Got a tower in mind?
           </h2>

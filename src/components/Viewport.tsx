@@ -24,6 +24,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentRef,
@@ -33,12 +34,21 @@ import { OrbitControls } from '@react-three/drei'
 import { Vector2, Vector3 } from 'three'
 import type { AnalysisResult, Structure, Hazard } from '@/engine'
 import { rotateAboutPivot } from '@/lib/orbit.ts'
+import { isTouchPointer, useCoarsePointer } from '@/lib/pointer.ts'
 import { BAND_HEX, BAND_LABEL, type UtilizationBand } from '@/lib/palette.ts'
 import { StoreyTooltip } from './StoreyTooltip.tsx'
 import { SimulationOverlay } from './SimulationOverlay.tsx'
 import { FoundationBlock, RoofCap, StoreyStack } from './scene/StoreyStack.tsx'
 import { FloodWater } from './scene/FloodWater.tsx'
 import { HazardArrows } from './scene/HazardArrows.tsx'
+import {
+  framingDistance_m,
+  orbitBounds,
+  cameraLift_m,
+  targetCorrection,
+  type Dimensions,
+  type OrbitBounds,
+} from './scene/cameraBounds.ts'
 import { cumulativeDrift_m } from './scene/motion.ts'
 import { useSimulationMotion } from './scene/useSimulationMotion.ts'
 import { useNightProgress } from './scene/useNightProgress.ts'
@@ -54,11 +64,6 @@ import { useSimulationStore } from '@/store/useSimulation.ts'
  * reads this constant, so changing it re-fits the camera consistently.
  */
 const CAMERA_FOV_DEG = 34
-
-interface Dimensions {
-  totalHeight_m: number
-  footprintRadius_m: number
-}
 
 function measure(structure: Structure): Dimensions {
   let totalHeight_m = 0
@@ -96,13 +101,13 @@ function CameraRig({
   }, [dimensions])
 
   useEffect(() => {
-    const { totalHeight_m, footprintRadius_m } = latest.current
-    const focusY = totalHeight_m / 2
-    // Distance that fits a sphere of `radius` in the vertical field of view,
-    // with 20% margin: d = r / sin(fov/2).
-    const radius = Math.max(footprintRadius_m, totalHeight_m / 2, 6)
-    const halfFov = ((CAMERA_FOV_DEG / 2) * Math.PI) / 180
-    const distance = (radius / Math.sin(halfFov)) * 1.2
+    const dimensions = latest.current
+    const focusY = dimensions.totalHeight_m / 2
+    // The same function the leash is built on, so "Frame view" can never put
+    // the camera somewhere the leash immediately drags it back from --
+    // `cameraBounds.test.ts` holds that as a property over every design the
+    // controls can express.
+    const distance = framingDistance_m(dimensions, CAMERA_FOV_DEG)
 
     const azimuth = Math.PI * 0.28
     const elevation = Math.PI * 0.16
@@ -280,6 +285,64 @@ function CursorPivot({
   return null
 }
 
+/**
+ * The leash: what stops the view leaving the city.
+ *
+ * Dolly is bounded by OrbitControls itself, through the `minDistance` /
+ * `maxDistance` props below — but those only measure distance to the *target*,
+ * and `zoomToCursor` moves the target. Aim at the horizon, scroll a few times,
+ * and the pivot walks out past the last block with the distance limit
+ * cheerfully satisfied the whole way. So the target is clamped here, every
+ * frame, and the camera is moved by the same vector.
+ *
+ * Moving both by one translation is what makes the limit feel like a wall
+ * rather than a snap: two points of a rigid body translated together keep the
+ * camera pointing exactly where it pointed, so the view simply stops sliding.
+ * It is the same property `lib/orbit.ts` relies on for rotation.
+ *
+ * Runs at default priority, which is after drei's own `controls.update()`
+ * (priority -1), so it corrects the frame that is about to be drawn rather
+ * than the one already gone.
+ */
+function OrbitLeash({
+  controlsRef,
+  bounds,
+}: {
+  controlsRef: React.RefObject<ComponentRef<typeof OrbitControls> | null>
+  bounds: OrbitBounds
+}) {
+  useFrame(() => {
+    const controls = controlsRef.current
+    if (!controls) return
+    // `controls.object`, not `useThree().camera`: it is the camera these
+    // controls actually drive, and reading it from the same object avoids
+    // correcting one camera while OrbitControls moves another.
+    const camera = controls.object
+
+    const fix = targetCorrection(controls.target, bounds)
+    if (fix.x !== 0 || fix.y !== 0 || fix.z !== 0) {
+      controls.target.set(
+        controls.target.x + fix.x,
+        controls.target.y + fix.y,
+        controls.target.z + fix.z,
+      )
+      camera.position.set(
+        camera.position.x + fix.x,
+        camera.position.y + fix.y,
+        camera.position.z + fix.z,
+      )
+    }
+
+    const lift = cameraLift_m(camera.position.y, bounds)
+    if (lift !== 0) {
+      camera.position.y += lift
+      controls.target.y += lift
+    }
+  })
+
+  return null
+}
+
 function Scene({
   result,
   structure,
@@ -294,13 +357,16 @@ function Scene({
   hazard: Hazard
   frameNonce: number
   hoveredStoreyIndex: number | null
-  onHoverStorey: (index: number, clientX: number, clientY: number) => void
+  onHoverStorey: (index: number, event: PointerEvent) => void
   onHoverStoreyEnd: (index: number) => void
 }) {
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
   const selectedStoreyIndex = useDesignStore((state) => state.selectedStoreyIndex)
   const selectStorey = useDesignStore((state) => state.selectStorey)
   const dimensions = measure(structure)
+  // Recomputed from the design, not a constant: how far back is "too far
+  // back" is only answerable relative to the thing you are backing away from.
+  const bounds = orbitBounds(dimensions, CAMERA_FOV_DEG)
   // Where the event is up to. A ref the scene reads per frame; the phase it is
   // derived from is state, and it changes three times per run.
   const motion = useSimulationMotion(hazard.kind)
@@ -377,8 +443,8 @@ function Scene({
         makeDefault
         enableDamping
         dampingFactor={0.08}
-        minDistance={5}
-        maxDistance={600}
+        minDistance={bounds.minDistance_m}
+        maxDistance={bounds.maxDistance_m}
         // Rotation is CursorPivot's, so that it can happen about the point
         // under the cursor instead of about the target. Everything else here
         // -- pan, dolly, damping, limits -- stays with OrbitControls.
@@ -389,6 +455,7 @@ function Scene({
         maxPolarAngle={Math.PI / 2 - 0.02}
       />
       <CursorPivot controlsRef={controlsRef} />
+      <OrbitLeash controlsRef={controlsRef} bounds={bounds} />
     </>
   )
 }
@@ -408,6 +475,13 @@ const TOOLTIP_REACH_PX = 240
 
 export function Viewport({ result, structure, hazard }: ViewportProps) {
   const [frameNonce, setFrameNonce] = useState(0)
+  // What the device is, not what any one event was: this picks the render
+  // resolution and the wording of the gesture hint, both of which have to be
+  // decided before anybody has touched anything.
+  const coarse = useCoarsePointer()
+  // Memoised because r3f re-reads `dpr` whenever the prop's identity changes,
+  // and a fresh array on every render is a resize check on every render.
+  const dpr = useMemo<[number, number]>(() => [1, coarse ? 1.5 : 2], [coarse])
   const simulationPhase = useSimulationStore((state) => state.phase)
   const startSimulation = useSimulationStore((state) => state.start)
   const dismissSimulation = useSimulationStore((state) => state.dismiss)
@@ -453,8 +527,14 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
   }, [])
 
   const handleHoverStorey = useCallback(
-    (index: number, clientX: number, clientY: number) => {
+    (index: number, event: PointerEvent) => {
       if (dragging.current) return
+      // A finger does not hover. It arrives, and it leaves without firing a
+      // reliable `pointerout`, so a tap on a storey would pin the card to the
+      // screen until something else happened to clear it. Tapping still
+      // selects, and the storey table says everything the card does.
+      if (isTouchPointer(event)) return
+      const { clientX, clientY } = event
       const node = tooltipRef.current
       if (node) {
         // Right of the pointer normally; flipped to the left near the edge of
@@ -483,7 +563,12 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
     <div className="relative h-full w-full">
       <Canvas
         shadows
-        dpr={[1, 2]}
+        // A phone reports a device pixel ratio of 3 and has a fraction of the
+        // fill rate to back it up, and this scene is shadowed, instanced and
+        // running several custom shaders. 1.5 is the point where the ink
+        // outlines still read and the frame rate stops being the thing the
+        // student notices. Desktop keeps 2.
+        dpr={dpr}
         camera={{ position: [34, 26, 38], fov: CAMERA_FOV_DEG, near: 0.1, far: 2000 }}
       >
         <Scene
@@ -514,8 +599,8 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
       {/* Chrome over the canvas is paper, like the rest of the studio, and
           opaque enough to hold its own against both a midday sky and a night
           one — the background under it moves through the whole day. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
-        <ul className="pointer-events-auto flex gap-3 rounded-full border-2 border-ink bg-paper/95 px-3 py-1.5 text-xs shadow-[3px_3px_0_0_var(--color-ink)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-2 p-2 sm:gap-3 sm:p-4">
+        <ul className="pointer-events-auto flex gap-2 rounded-full border-2 border-ink bg-paper/95 px-2.5 py-1 text-[0.7rem] shadow-[3px_3px_0_0_var(--color-ink)] sm:gap-3 sm:px-3 sm:py-1.5 sm:text-xs">
           {LEGEND_BANDS.map((band) => (
             <li key={band} className="flex items-center gap-1.5">
               <span
@@ -534,17 +619,20 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
             onClick={() => startSimulation(hazard.kind)}
             disabled={running}
             title={`Run the ${HAZARD_LABEL[hazard.kind].toLowerCase()} against this design`}
-            className="rounded-full border-2 border-ink px-3.5 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-45"
+            className="min-h-9 rounded-full border-2 border-ink px-3.5 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-45"
             style={{ backgroundColor: HAZARD_HEX[hazard.kind] }}
           >
-            ▶ Start a simulation
+            {/* The headline action keeps its full name wherever it fits, and
+                loses the words rather than the button where it does not. */}
+            ▶ <span className="max-sm:hidden">Start a simulation</span>
+            <span className="sm:hidden">Simulate</span>
           </button>
           <button
             type="button"
             onClick={() => setFrameNonce((nonce) => nonce + 1)}
-            className="rounded-full border-2 border-ink bg-white px-3 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
+            className="min-h-9 rounded-full border-2 border-ink bg-white px-3 py-1.5 font-display text-xs text-ink shadow-[3px_3px_0_0_var(--color-ink)] transition-transform hover:-translate-y-0.5"
           >
-            Frame view
+            Frame<span className="max-sm:hidden"> view</span>
           </button>
         </div>
       </div>
@@ -554,10 +642,22 @@ export function Viewport({ result, structure, hazard }: ViewportProps) {
       {/* On a chip, not bare text: the sky behind it runs from midday blue to
           midnight, and no single text colour is legible against both. */}
       {!running && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4">
-          <p className="rounded-full border-2 border-ink/70 bg-paper/90 px-3.5 py-1.5 text-center text-[0.7rem] text-ink/70">
-            Drag to orbit &middot; scroll to zoom at the cursor &middot;
-            double-click to re-centre &middot; click a storey to edit it
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 sm:p-4">
+          {/* Named after the gesture the device actually has. "Scroll to zoom"
+              on a phone is an instruction nobody can follow, and a hint that
+              does not work is worse than none. */}
+          <p className="mx-2 rounded-full border-2 border-ink/70 bg-paper/90 px-3 py-1.5 text-center text-[0.65rem] text-ink/70 sm:px-3.5 sm:text-[0.7rem]">
+            {coarse ? (
+              <>
+                Drag to orbit &middot; pinch to zoom &middot; two fingers to
+                pan &middot; tap a storey to edit it
+              </>
+            ) : (
+              <>
+                Drag to orbit &middot; scroll to zoom at the cursor &middot;
+                double-click to re-centre &middot; click a storey to edit it
+              </>
+            )}
           </p>
         </div>
       )}

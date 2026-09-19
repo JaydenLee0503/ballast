@@ -131,7 +131,7 @@ interface StoreyBoxProps {
   /** Whether this storey is drawn damaged at all. Cracks only. */
   showDamage: boolean
   onSelect: (index: number | null) => void
-  onHover: (index: number, clientX: number, clientY: number) => void
+  onHover: (index: number, event: PointerEvent) => void
   onHoverEnd: (index: number) => void
 }
 
@@ -265,11 +265,11 @@ function StoreyBox({
       onPointerOver={(event: ThreeEvent<PointerEvent>) => {
         event.stopPropagation()
         document.body.style.cursor = 'pointer'
-        onHover(index, event.nativeEvent.clientX, event.nativeEvent.clientY)
+        onHover(index, event.nativeEvent)
       }}
       onPointerMove={(event: ThreeEvent<PointerEvent>) => {
         event.stopPropagation()
-        onHover(index, event.nativeEvent.clientX, event.nativeEvent.clientY)
+        onHover(index, event.nativeEvent)
       }}
       onPointerOut={() => {
         document.body.style.cursor = ''
@@ -311,12 +311,14 @@ export interface StoreyStackProps {
   /** Bearing the hazard acts along, in degrees in the engine's plan frame. */
   directionDeg: number
   /**
-   * Called on entering a storey and on every move across it, with the pointer
-   * in client coordinates. The caller decides what to do with the position;
-   * `Viewport` writes it straight to the DOM so following the pointer costs no
-   * React renders.
+   * Called on entering a storey and on every move across it, with the browser
+   * event itself. The caller decides everything: `Viewport` writes the client
+   * coordinates straight to the DOM so following the pointer costs no React
+   * renders, and reads `pointerType` to ignore a finger — a touch has no hover
+   * and fires no reliable exit, so a tap would otherwise leave a card stuck to
+   * the screen.
    */
-  onHover: (index: number, clientX: number, clientY: number) => void
+  onHover: (index: number, event: PointerEvent) => void
   /**
    * The pointer left this storey. Takes the index rather than nothing, because
    * moving between two adjacent storeys fires an exit and an entry with no
